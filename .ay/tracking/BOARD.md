@@ -17,8 +17,8 @@
 | 13 | Docker + deploy configs | claude | DONE | - |
 | 14 | Documentation (ARCHITECTURE, PRIMITIVES, PATTERNS, DEPLOYMENT) | claude | DONE | - |
 | 15 | Edge case testing + fixes | claude | DONE | - |
-| 16 | Push to GitHub repo | - | READY | - |
-| 17 | Publish to npm | - | READY | 16 |
+| 16 | Push to GitHub repo | claude | DONE | - |
+| 17 | Publish to npm | - | READY | - |
 | 18 | YAML spec support | - | BACKLOG | - |
 | 19 | OpenAPI 3.1 full support (webhooks, pathItems) | - | BACKLOG | - |
 | 20 | HTTP-SSE transport for remote MCP servers | - | BACKLOG | - |
