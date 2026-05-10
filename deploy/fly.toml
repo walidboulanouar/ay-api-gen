@@ -1,0 +1,24 @@
+# Fly.io deployment for ay-api-gen MCP server
+#
+# Deploy:
+#   fly launch --name ay-api-gen
+#   fly secrets set API_KEY=your-key SPEC_URL=https://api.example.com/openapi.json
+#   fly deploy
+#
+# The entrypoint reads SPEC_URL from env:
+#   docker run -e SPEC_URL=... ay-api-gen
+
+app = "ay-api-gen"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  auto_stop_machines = "stop"
+  auto_start_machines = true

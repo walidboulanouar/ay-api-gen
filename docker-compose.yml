@@ -1,0 +1,26 @@
+# Example: Run multiple API MCP servers
+#
+# Usage:
+#   docker compose up
+#
+# Then add to .claude/settings.json:
+#   { "mcpServers": { "petstore": { "command": "docker", "args": ["attach", "petstore-mcp"] } } }
+
+services:
+  petstore-mcp:
+    build: .
+    container_name: petstore-mcp
+    command: ["https://petstore.swagger.io/v2/swagger.json"]
+    stdin_open: true
+    environment:
+      - API_BASE_URL=https://petstore.swagger.io/v2
+
+  # Example: your own API
+  # custom-api-mcp:
+  #   build: .
+  #   container_name: custom-api-mcp
+  #   command: ["https://api.your-service.com/openapi.json"]
+  #   stdin_open: true
+  #   environment:
+  #     - API_KEY=${CUSTOM_API_KEY}
+  #     - API_BASE_URL=https://api.your-service.com

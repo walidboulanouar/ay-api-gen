@@ -1,0 +1,28 @@
+name: Regenerate API Tools
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Monday 6am UTC
+  workflow_dispatch:
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      - name: Regenerate all APIs from saved configs
+        run: npx ay-api-gen regen --all --no-settings || echo "No APIs to regenerate"
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .ay/apis/
+          git diff --cached --quiet || git commit -m "chore: regenerate API tools from latest specs"
+          git push
