@@ -1,0 +1,13 @@
+# Dev/tracking files — not published to npm
+.ay/
+.claude/
+.github/
+test/
+docs/
+deploy/
+Dockerfile
+docker-compose.yml
+CLAUDE.md
+.env
+.env.*
+nul

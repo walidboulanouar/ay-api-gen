@@ -7,12 +7,41 @@
   "bin": {
     "ay-api-gen": "./bin/ay-api-gen.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
   "scripts": {
     "test": "node test/run.js"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/walidboulanouar/ay-api-gen.git"
+  },
+  "homepage": "https://github.com/walidboulanouar/ay-api-gen#readme",
+  "bugs": {
+    "url": "https://github.com/walidboulanouar/ay-api-gen/issues"
+  },
+  "author": "Walid Boulanouar",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1"
   },
-  "keywords": ["openapi", "mcp", "cli", "code-generation", "claude"],
+  "keywords": [
+    "openapi",
+    "swagger",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "cli",
+    "code-generation",
+    "api",
+    "agent",
+    "ai"
+  ],
   "license": "MIT"
 }

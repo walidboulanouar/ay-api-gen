@@ -212,6 +212,7 @@ export function extractEndpoints(spec) {
 
   const endpoints = [];
   const paths = spec.paths || {};
+  const usedToolNames = new Set();
 
   for (const [path, pathItem] of Object.entries(paths)) {
     // Shared parameters at path level
@@ -221,13 +222,24 @@ export function extractEndpoints(spec) {
       const operation = pathItem[method];
       if (!operation) continue;
 
-      const toolName = operation.operationId
+      let toolName = operation.operationId
         ? operation.operationId
             .replace(/([a-z])([A-Z])/g, "$1_$2") // camelCase -> snake_case
             .replace(/[^a-zA-Z0-9_]/g, "_")
             .replace(/_+/g, "_")
             .toLowerCase()
         : deriveToolName(method, path);
+
+      // Deduplicate: if name already used, append a suffix
+      if (usedToolNames.has(toolName)) {
+        const base = toolName;
+        let i = 2;
+        while (usedToolNames.has(toolName)) {
+          toolName = `${base}_${i}`;
+          i++;
+        }
+      }
+      usedToolNames.add(toolName);
 
       const cliCommand = deriveCLICommand(method, path);
 
