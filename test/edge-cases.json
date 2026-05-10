@@ -1,0 +1,315 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Edge Case API",
+    "description": "API with tricky paths, nested resources, enums, special chars, and empty endpoints",
+    "version": "2.0.0"
+  },
+  "servers": [{ "url": "https://api.example.com/v1" }],
+  "paths": {
+    "/users": {
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List all users with pagination",
+        "description": "Returns a paginated list of users. Supports filtering by role and status.",
+        "tags": ["users"],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "Page number (1-based)",
+            "schema": { "type": "integer", "default": 1 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Items per page (max 100)",
+            "schema": { "type": "integer", "default": 20 }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "description": "Filter by user role",
+            "schema": { "type": "string", "enum": ["admin", "user", "moderator", "guest"] }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by account status",
+            "schema": { "type": "string", "enum": ["active", "inactive", "suspended"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/User" }
+                    },
+                    "total": { "type": "integer" },
+                    "page": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createUser",
+        "summary": "Create a new user account",
+        "description": "Creates a new user. Requires name and email. Returns the created user with generated ID.",
+        "tags": ["users"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateUserRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}": {
+      "get": {
+        "summary": "Get user by ID",
+        "description": "Retrieves a single user by their unique identifier",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "description": "The unique user identifier (UUID format)",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          },
+          "404": { "description": "User not found" }
+        }
+      },
+      "patch": {
+        "summary": "Partially update a user",
+        "description": "Update one or more fields of an existing user",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "description": "New display name" },
+                  "email": { "type": "string", "description": "New email address" },
+                  "role": { "type": "string", "enum": ["admin", "user", "moderator"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "User updated" }
+        }
+      },
+      "delete": {
+        "summary": "Delete a user account",
+        "description": "Permanently deletes a user and all associated data. This action cannot be undone.",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "User deleted" }
+        }
+      }
+    },
+    "/users/{userId}/posts": {
+      "get": {
+        "summary": "List posts by user",
+        "description": "Returns all posts created by the specified user, sorted by creation date (newest first)",
+        "tags": ["users", "posts"],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort order: asc or desc",
+            "schema": { "type": "string", "enum": ["asc", "desc"] }
+          }
+        ],
+        "responses": {
+          "200": { "description": "List of user's posts" }
+        }
+      },
+      "post": {
+        "summary": "Create a post for a user",
+        "tags": ["users", "posts"],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string", "description": "Post title" },
+                  "body": { "type": "string", "description": "Post content in markdown" },
+                  "published": { "type": "boolean", "description": "Whether to publish immediately" }
+                },
+                "required": ["title", "body"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Post created" }
+        }
+      }
+    },
+    "/users/{userId}/posts/{postId}/comments": {
+      "get": {
+        "summary": "List comments on a post",
+        "description": "Returns all comments for a specific post. Deeply nested resource test.",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "postId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "List of comments" }
+        }
+      }
+    },
+    "/health-check": {
+      "get": {
+        "summary": "Health check endpoint",
+        "description": "Returns 200 if the service is healthy. No parameters needed.",
+        "responses": {
+          "200": { "description": "Service is healthy" }
+        }
+      }
+    },
+    "/api-keys/rotate": {
+      "post": {
+        "summary": "Rotate API key",
+        "description": "Generates a new API key and invalidates the old one",
+        "responses": {
+          "200": { "description": "New API key" }
+        }
+      }
+    },
+    "/search": {
+      "get": {
+        "summary": "Global search across all resources",
+        "description": "Full-text search across users, posts, and comments",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "Search query string",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Resource type filter",
+            "schema": { "type": "string", "enum": ["user", "post", "comment"] }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "description": "Whether to include archived items",
+            "schema": { "type": "boolean" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Search results" }
+        }
+      }
+    },
+    "/webhooks/{webhookId}/deliveries/{deliveryId}/redeliver": {
+      "post": {
+        "summary": "Redeliver a webhook payload",
+        "description": "Resend a previously failed webhook delivery attempt",
+        "parameters": [
+          { "name": "webhookId", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Webhook configuration ID" },
+          { "name": "deliveryId", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Delivery attempt ID" }
+        ],
+        "responses": {
+          "202": { "description": "Redelivery queued" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "role": { "type": "string", "enum": ["admin", "user", "moderator", "guest"] },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "User's full name" },
+          "email": { "type": "string", "description": "User's email address" },
+          "role": { "type": "string", "description": "Initial role assignment", "enum": ["admin", "user", "moderator"] },
+          "password": { "type": "string", "description": "Initial password (min 8 chars)" }
+        },
+        "required": ["name", "email", "password"]
+      }
+    }
+  }
+}

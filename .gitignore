@@ -1,0 +1,14 @@
+node_modules/
+.env
+.ay/apis/*/node_modules/
+.ay/apis/*/mcp-server.js
+.ay/apis/*/cli.js
+.ay/apis/*/endpoints.json
+.ay/apis/*/config.json
+.ay/apis/*/.env
+.ay/apis/*/.env.example
+.ay/apis/*/package.json
+.ay/sessions/
+.ay/locks/
+.ay/retros/
+.ay/plans/
