@@ -34,6 +34,18 @@ function parseArgs(argv) {
       opts.fromMcp = argv[++i];
     } else if (arg === "--all") {
       opts.all = true;
+    } else if (arg === "--only") {
+      opts.only = argv[++i];
+    } else if (arg === "--exclude") {
+      opts.exclude = argv[++i];
+    } else if (arg === "--slim") {
+      opts.slim = true;
+    } else if (arg === "--token-budget") {
+      opts.tokenBudget = parseInt(argv[++i], 10);
+    } else if (arg === "--max-tools") {
+      opts.maxTools = parseInt(argv[++i], 10);
+    } else if (arg === "--verbose" || arg === "-v") {
+      opts.verbose = true;
     } else if (!arg.startsWith("-")) {
       opts.positional.push(arg);
     }
@@ -47,9 +59,13 @@ ay-api-gen — Generate MCP servers + CLI tools from OpenAPI specs
 
 COMMANDS
   ay-api-gen <spec-url-or-file> [options]     Generate MCP server + CLI
+  ay-api-gen init                              Interactive setup wizard
+  ay-api-gen discover <domain>                 Auto-find OpenAPI specs on a domain
   ay-api-gen serve <spec>                      Start MCP server directly (no codegen)
   ay-api-gen run <spec> <resource> <action>    Call API directly (no codegen)
   ay-api-gen list                              List all generated APIs
+  ay-api-gen doctor                            Health check all registered APIs
+  ay-api-gen diff <old-spec> <new-spec>        Compare two spec versions
   ay-api-gen remove <name>                     Remove a generated API from registry
   ay-api-gen regen [name|--all]                Regenerate from saved config
   ay-api-gen --from-mcp <file> [options]       Reverse: MCP tools -> OpenAPI
@@ -60,6 +76,12 @@ OPTIONS
   --no-settings        Skip auto-registering MCP server in settings.json
   --from-mcp <file>    Read MCP tools from settings.json or server file
   --all                Regenerate all APIs (with regen command)
+  --only <patterns>    Only include matching endpoints (comma-separated)
+  --exclude <patterns> Exclude matching endpoints (comma-separated)
+  --slim               Smart pruning: keep only essential tools within token budget
+  --token-budget <n>   Token budget for --slim (default: 8000)
+  --max-tools <n>      Max tools for --slim (default: 50)
+  --verbose, -v        Verbose output
   --help, -h           Show this help
 
 EXAMPLES
@@ -227,6 +249,26 @@ async function cmdGenerate(source, opts) {
   const authTypes = formatAuthTypes(parsed.securitySchemes);
   console.log(`Auth:     ${Array.isArray(authTypes) ? authTypes.join(", ") : authTypes}`);
 
+  // Apply filters
+  if (opts.only || opts.exclude) {
+    const { filterEndpoints } = await import("../src/filter.js");
+    const before = parsed.endpoints.length;
+    parsed.endpoints = filterEndpoints(parsed.endpoints, { only: opts.only, exclude: opts.exclude });
+    console.log(`Filter:   ${before} -> ${parsed.endpoints.length} endpoints`);
+  }
+
+  // Apply smart pruning
+  if (opts.slim) {
+    const { pruneEndpoints, printSlimResults } = await import("../src/slim.js");
+    const originalCount = parsed.endpoints.length;
+    const result = pruneEndpoints(parsed.endpoints, {
+      tokenBudget: opts.tokenBudget,
+      maxTools: opts.maxTools,
+    });
+    parsed.endpoints = result.kept;
+    printSlimResults(result, originalCount);
+  }
+
   // Output directory
   const outputDir = resolve(opts.output || `.ay/apis/${apiName}`);
   mkdirSync(outputDir, { recursive: true });
@@ -342,6 +384,64 @@ async function main() {
     return cmdRemove(name);
   }
   if (cmd === "regen") return cmdRegen(opts.positional[1], opts);
+
+  // Init: interactive wizard
+  if (cmd === "init") {
+    const { runInitWizard } = await import("../src/init-wizard.js");
+    const config = await runInitWizard();
+    if (config) {
+      console.log(`\n  Generating ${config.name}...`);
+      // Write .env if auth was provided
+      if (Object.keys(config.envVars).length > 0) {
+        const outputDir = resolve(opts.output || `.ay/apis/${config.name}`);
+        mkdirSync(outputDir, { recursive: true });
+        const envLines = Object.entries(config.envVars).map(([k, v]) => `${k}=${v}`);
+        writeFileSync(resolve(outputDir, ".env"), envLines.join("\n") + "\n", "utf-8");
+      }
+      await cmdGenerate(config.source, { ...opts, name: config.name });
+    }
+    return;
+  }
+
+  // Discover: auto-find OpenAPI specs on a domain
+  if (cmd === "discover") {
+    const domain = opts.positional[1];
+    if (!domain) { console.error("Usage: ay-api-gen discover <domain>"); process.exit(1); }
+    const { discover } = await import("../src/discover.js");
+    console.log(`\nSearching for OpenAPI specs on ${domain}...\n`);
+    const results = await discover(domain, { verbose: opts.verbose });
+    if (results.length === 0) {
+      console.log("  No specs found. Try providing the URL directly.");
+    } else {
+      console.log(`  Found ${results.length} spec(s):\n`);
+      for (const r of results) {
+        console.log(`  ${r.title} (${r.version}) — ${r.endpoints} endpoints`);
+        console.log(`    ${r.url}`);
+        console.log(`    Generate: ay-api-gen ${r.url}\n`);
+      }
+    }
+    return;
+  }
+
+  // Diff: compare two spec versions
+  if (cmd === "diff") {
+    const oldSpec = opts.positional[1];
+    const newSpec = opts.positional[2];
+    if (!oldSpec || !newSpec) { console.error("Usage: ay-api-gen diff <old-spec> <new-spec>"); process.exit(1); }
+    const { runDiff, printDiff } = await import("../src/diff.js");
+    const result = await runDiff(oldSpec, newSpec);
+    printDiff(result);
+    return;
+  }
+
+  // Doctor: health check all registered APIs
+  if (cmd === "doctor") {
+    const { runDoctor, printDoctorResults } = await import("../src/doctor.js");
+    const results = await runDoctor();
+    printDoctorResults(results);
+    const hasFail = results.apis?.some(a => a.checks.some(c => c.status === "fail"));
+    process.exit(hasFail ? 1 : 0);
+  }
 
   // Runtime serve: start MCP server directly from spec (no codegen)
   if (cmd === "serve") {

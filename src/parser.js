@@ -6,6 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseYaml } from "./yaml-parser.js";
 
 /**
  * Fetch spec from URL or read from local file path.
@@ -29,10 +30,13 @@ export async function loadSpec(source) {
   try {
     spec = JSON.parse(raw);
   } catch {
-    throw new Error(
-      "Only JSON specs are supported in this MVP. Convert YAML to JSON first:\n" +
-      "  npx js-yaml your-spec.yaml > spec.json"
-    );
+    // Try parsing as YAML
+    spec = parseYaml(raw);
+    if (!spec) {
+      throw new Error(
+        "Failed to parse spec as JSON or YAML. Ensure the file is valid."
+      );
+    }
   }
 
   if (sourceUrl) {
