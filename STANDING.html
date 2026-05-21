@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ay-api-gen — Standing & Remaining Work</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e0e0e8; line-height: 1.6; padding: 2rem; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.25rem; color: #fff; }
+  .subtitle { color: #888; font-size: 0.95rem; margin-bottom: 2.5rem; }
+  h2 { font-size: 1.3rem; font-weight: 600; color: #fff; margin: 2.5rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1e1e2e; }
+  h3 { font-size: 1rem; font-weight: 600; color: #ccc; margin: 1.5rem 0 0.5rem; }
+
+  .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .card-header .name { font-weight: 600; font-size: 1.05rem; color: #fff; }
+  .card-header .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .badge-done { background: #0d3320; color: #4ade80; border: 1px solid #166534; }
+  .badge-ready { background: #1a2a4a; color: #60a5fa; border: 1px solid #1e3a8a; }
+  .badge-progress { background: #3a2e0d; color: #facc15; border: 1px solid #854d0e; }
+  .badge-blocked { background: #3b1219; color: #f87171; border: 1px solid #7f1d1d; }
+  .badge-backlog { background: #1e1b34; color: #a78bfa; border: 1px solid #3b3266; }
+
+  code, .code { font-family: 'SF Mono', 'Fira Code', monospace; background: #1a1a28; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #a78bfa; }
+  pre { background: #1a1a28; border: 1px solid #1e1e2e; border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: 0.85rem; color: #ccc; margin: 0.5rem 0; font-family: 'SF Mono', 'Fira Code', monospace; }
+
+  a { color: #60a5fa; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-bottom: 2rem; }
+  .summary-card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 10px; padding: 1rem; text-align: center; }
+  .summary-card .num { font-size: 2rem; font-weight: 700; color: #fff; }
+  .summary-card .label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+  .summary-card.green .num { color: #4ade80; }
+  .summary-card.blue .num { color: #60a5fa; }
+  .summary-card.yellow .num { color: #facc15; }
+  .summary-card.red .num { color: #f87171; }
+  .summary-card.purple .num { color: #a78bfa; }
+
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+  th { text-align: left; padding: 0.6rem 0.75rem; color: #888; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #1e1e2e; }
+  td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #15151f; color: #ccc; }
+  td.task-num { color: #666; font-family: monospace; width: 40px; }
+  td.task-status { width: 110px; }
+  tr:hover td { background: #0f0f17; }
+
+  .section-note { background: #1a1a28; border-left: 3px solid #60a5fa; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; font-size: 0.9rem; color: #999; }
+  .section-note.warn { border-left-color: #f87171; }
+  .section-note.success { border-left-color: #4ade80; }
+
+  ul.feature-list { list-style: none; }
+  ul.feature-list li { padding: 0.35rem 0; padding-left: 1.5rem; position: relative; color: #ccc; font-size: 0.92rem; }
+  ul.feature-list li::before { content: '✓'; position: absolute; left: 0; color: #4ade80; font-weight: bold; }
+
+  .commit-line { font-family: monospace; font-size: 0.85rem; color: #999; padding: 0.25rem 0; }
+  .commit-line .hash { color: #a78bfa; }
+
+  .footer { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #1e1e2e; color: #666; font-size: 0.85rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>ay-api-gen — Standing Report</h1>
+<p class="subtitle">Project status, what's shipped, what's next — generated 2026-05-21</p>
+
+<div class="summary-grid">
+  <div class="summary-card green">
+    <div class="num">16</div>
+    <div class="label">Done</div>
+  </div>
+  <div class="summary-card yellow">
+    <div class="num">1</div>
+    <div class="label">In Progress</div>
+  </div>
+  <div class="summary-card blue">
+    <div class="num">6</div>
+    <div class="label">Ready</div>
+  </div>
+  <div class="summary-card purple">
+    <div class="num">7</div>
+    <div class="label">Backlog</div>
+  </div>
+  <div class="summary-card red">
+    <div class="num">1</div>
+    <div class="label">Blocked</div>
+  </div>
+</div>
+
+<div class="section-note success">
+  <strong>v0.1.0 shipped.</strong> Core MCP-from-OpenAPI generator is feature-complete with 29 passing tests. Repo lives at <code>github.com/walidboulanouar/ay-api-gen</code>. Now mirrored to <code>liwala/ay-api-gen</code> for review.
+</div>
+
+<h2>What ay-api-gen does</h2>
+
+<div class="card">
+  <p style="color:#ccc; margin-bottom: 0.75rem;">Turns any OpenAPI/Swagger spec into a working MCP server and CLI — in two modes:</p>
+  <ul class="feature-list">
+    <li><strong>Runtime mode:</strong> <code>ay-api-gen serve &lt;spec&gt;</code> — no codegen, just point and run</li>
+    <li><strong>Generate mode:</strong> emits standalone MCP server + CLI files you can customize and deploy</li>
+    <li><strong>Reverse:</strong> takes existing MCP tools and generates an OpenAPI 3.0 spec back</li>
+    <li>Auto-detects auth (OAuth2, Bearer, Basic, API Key) and generates <code>.env.example</code> per scheme</li>
+    <li>Auto-registers MCP servers in <code>.claude/settings.local.json</code></li>
+    <li>Ships with CI/CD (GitHub Actions), Docker, Fly.io deploy configs</li>
+  </ul>
+</div>
+
+<h2>Shipped (v0.1.0)</h2>
+
+<table>
+  <thead><tr><th>#</th><th>Feature</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td class="task-num">01</td><td>OpenAPI parser (Swagger 2.0 + OpenAPI 3.x)</td><td class="task-status"><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">02</td><td>MCP server generator (Zod schemas)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">03</td><td>CLI generator (zero-dep)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">04</td><td>Settings injector (auto-register in Claude Code)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">05</td><td>Reverse generator (MCP → OpenAPI)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">06</td><td>Auth detection (OAuth2, Bearer, Basic, API Key)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">07</td><td>Runtime MCP server (no codegen)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">08</td><td>Runtime CLI (no codegen)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">09</td><td>.env.example generator</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">10</td><td>Spec validator</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">11</td><td>API registry (list/remove/regen)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">12</td><td>CI/CD workflows (GitHub Actions)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">13</td><td>Docker + deploy configs</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">14</td><td>Documentation (ARCHITECTURE, PRIMITIVES, PATTERNS, DEPLOYMENT)</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">15</td><td>Edge-case testing + fixes</td><td><span class="badge badge-done">Done</span></td></tr>
+    <tr><td class="task-num">16</td><td>Push to GitHub</td><td><span class="badge badge-done">Done</span></td></tr>
+  </tbody>
+</table>
+
+<h2>In Progress</h2>
+
+<table>
+  <thead><tr><th>#</th><th>Feature</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td class="task-num">25</td><td><strong>ay-api-gen doctor</strong> — health check all registered APIs (ping endpoints, validate auth, report broken specs)</td><td class="task-status"><span class="badge badge-progress">In Progress</span></td></tr>
+  </tbody>
+</table>
+
+<h2>Blocked</h2>
+
+<div class="section-note warn">
+  One task is blocked on external credentials — needs human action before it can move.
+</div>
+
+<table>
+  <thead><tr><th>#</th><th>Feature</th><th>Blocked By</th></tr></thead>
+  <tbody>
+    <tr><td class="task-num">17</td><td><strong>Publish to npm</strong> — make <code>npx ay-api-gen</code> work for everyone</td><td class="task-status">npm login needed</td></tr>
+  </tbody>
+</table>
+
+<h2>Ready to Pick Up Next</h2>
+
+<p style="color:#999; margin-bottom: 1rem;">These are scoped and have no blockers. Each is a 1–3 hour task.</p>
+
+<table>
+  <thead><tr><th>#</th><th>Feature</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td class="task-num">18</td><td><strong>YAML spec support</strong></td><td>Most OpenAPI specs in the wild are YAML, not JSON</td></tr>
+    <tr><td class="task-num">22</td><td><strong>Tool filtering (--only / --exclude)</strong></td><td>Big APIs blow Claude's context — pick only the tools you need</td></tr>
+    <tr><td class="task-num">26</td><td><strong>ay-api-gen init</strong> — interactive wizard</td><td>First-time UX: paste a URL, get a working MCP server</td></tr>
+    <tr><td class="task-num">27</td><td><strong>ay-api-gen discover &lt;domain&gt;</strong></td><td>Auto-find spec at common paths (/openapi.json, /swagger.json, /api-docs)</td></tr>
+    <tr><td class="task-num">28</td><td><strong>ay-api-gen diff &lt;old&gt; &lt;new&gt;</strong></td><td>Show what changed when an API ships a new spec</td></tr>
+    <tr><td class="task-num">29</td><td><strong>Response truncation</strong></td><td>Auto-trim large API responses so they fit in Claude's context</td></tr>
+  </tbody>
+</table>
+
+<h2>Backlog (bigger ideas)</h2>
+
+<table>
+  <thead><tr><th>#</th><th>Feature</th><th>Scope</th></tr></thead>
+  <tbody>
+    <tr><td class="task-num">19</td><td>OpenAPI 3.1 full support (webhooks, pathItems)</td><td class="task-status"><span class="badge badge-backlog">Medium</span></td></tr>
+    <tr><td class="task-num">20</td><td>HTTP-SSE transport for remote MCP servers</td><td><span class="badge badge-backlog">Medium</span></td></tr>
+    <tr><td class="task-num">21</td><td>Multi-spec merge (combine N specs into 1 MCP server)</td><td><span class="badge badge-backlog">Large</span></td></tr>
+    <tr><td class="task-num">23</td><td>Response caching in runtime MCP server</td><td><span class="badge badge-backlog">Small</span></td></tr>
+    <tr><td class="task-num">24</td><td>Rate limiting in runtime MCP server</td><td><span class="badge badge-backlog">Small</span></td></tr>
+    <tr><td class="task-num">30</td><td>Public API catalog (<code>serve github</code>, <code>serve stripe</code>)</td><td><span class="badge badge-backlog">Large</span></td></tr>
+    <tr><td class="task-num">31</td><td>Smart tool pruning <code>--slim</code> (token budget)</td><td><span class="badge badge-backlog">Medium</span></td></tr>
+  </tbody>
+</table>
+
+<h2>Recent Commits</h2>
+
+<div class="card">
+  <div class="commit-line"><span class="hash">fb8684b</span> docs: add SETUP-REQUIREMENTS.html — visual setup checklist</div>
+  <div class="commit-line"><span class="hash">2696f1f</span> feat: add 8 high-impact features for v0.2</div>
+  <div class="commit-line"><span class="hash">0e866b5</span> fix: deduplicate tool names when spec has duplicate paths</div>
+  <div class="commit-line"><span class="hash">2440c06</span> docs: add comprehensive README with quickstart, API reference, and examples</div>
+  <div class="commit-line"><span class="hash">25b84b6</span> chore: mark task #16 done — repo pushed to GitHub</div>
+  <div class="commit-line"><span class="hash">cc8be36</span> chore: populate AY tracking files with project state</div>
+  <div class="commit-line"><span class="hash">a8d456b</span> feat: add CI/CD workflows, Docker, and deploy configs</div>
+  <div class="commit-line"><span class="hash">2189ac1</span> feat: ay-api-gen MVP — OpenAPI to MCP server + CLI generator</div>
+</div>
+
+<h2>Architecture Decisions Worth Knowing</h2>
+
+<div class="card">
+  <div class="card-header"><span class="name">ADR-001 — Two-mode (runtime vs generate)</span></div>
+  <p style="color:#ccc; font-size: 0.9rem;">We support <strong>both</strong> a zero-friction runtime (<code>serve</code>) and a codegen mode that emits standalone files. Runtime is for fast prototyping; generate is for customization and offline deployment. Most competitors pick one — we picked both because each fails the other use case.</p>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="name">ADR-002 — Zod schemas, not raw JSON Schema</span></div>
+  <p style="color:#ccc; font-size: 0.9rem;">MCP SDK v1.29+ requires Zod. We use <code>z.coerce.number()</code>/<code>z.coerce.boolean()</code> because MCP tool args arrive as strings — without coercion every numeric/boolean param breaks.</p>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="name">ADR-004 — Auto-install deps in output dir</span></div>
+  <p style="color:#ccc; font-size: 0.9rem;">Generated MCP servers import <code>@modelcontextprotocol/sdk</code> and <code>zod</code>. We emit a <code>package.json</code> and run <code>npm install</code> automatically so standalone usage works without manual setup.</p>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="name">ADR-005 — Detect security schemes from spec</span></div>
+  <p style="color:#ccc; font-size: 0.9rem;">We parse <code>securityDefinitions</code> (2.0) and <code>components.securitySchemes</code> (3.x) and generate auth code + <code>.env.example</code> entries specific to each scheme. Users don't have to figure out what auth an API needs.</p>
+</div>
+
+<h2>Known Gotchas (from session handoffs)</h2>
+
+<ul class="feature-list" style="margin-top: 0.5rem;">
+  <li><strong>MCP SDK requires Zod schemas</strong> — plain <code>{type: "string"}</code> objects throw. Always <code>z.string()</code>, <code>z.coerce.number()</code>, etc.</li>
+  <li><strong>Template-literal escaping</strong> — generators that emit JS containing backticks must use string concatenation + a <code>tpl()</code> helper, not nested template literals.</li>
+  <li><strong>Relative server URLs</strong> — OpenAPI 3.x specs like Petstore use <code>/api/v3</code>. Resolve against the source URL origin; parser attaches <code>_sourceUrl</code> for this.</li>
+  <li><strong>Swagger 2.0 body params</strong> — they live in the <code>parameters</code> array with <code>in: "body"</code>, while OpenAPI 3.x uses <code>requestBody</code>. Parser handles both and filters body params out of the params array.</li>
+  <li><strong>Duplicate tool names</strong> — when a spec has duplicate path/method combos, dedupe at codegen time (fixed in commit <code>0e866b5</code>).</li>
+</ul>
+
+<h2>What Luisa might want to look at first</h2>
+
+<div class="card">
+  <ul class="feature-list">
+    <li><code>README.md</code> — quickstart, API reference, examples</li>
+    <li><code>src/</code> — the generator core (parser, codegen, runtime)</li>
+    <li><code>SETUP-REQUIREMENTS.html</code> — what's needed to run/develop locally</li>
+    <li><code>.ay/tracking/BOARD.md</code> — full task pipeline</li>
+    <li><code>.ay/tracking/DECISIONS.md</code> — ADRs explaining the "why"</li>
+    <li><code>test/</code> — 29 passing tests, good entry point for understanding behavior</li>
+  </ul>
+</div>
+
+<div class="footer">
+  Generated 2026-05-21 · ay-api-gen v0.1.0 · master @ fb8684b
+</div>
+
+</body>
+</html>
