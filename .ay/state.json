@@ -2,5 +2,60 @@
   "version": "1.0.0",
   "runtime": "claude",
   "installed_at": "2026-05-09T20:52:38.972Z",
-  "project": "ay-api-gen"
+  "reinitialized_at": "2026-05-24T03:00:00.000Z",
+  "project": "ay-api-gen",
+  "project_version": "0.1.0",
+  "branch": "ay-framework",
+  "remotes": {
+    "origin": "github.com/walidboulanouar/ay-api-gen",
+    "liwala": "github.com/liwala/ay-api-gen"
+  },
+  "phase": "post-mvp-security-hardening",
+  "active_pr": {
+    "number": 1,
+    "title": "Security threat model + ADR-006 (three-tier security pipeline RFC)",
+    "branch": "security-threat-model",
+    "author": "luisalima",
+    "status": "open-awaiting-acceptance",
+    "review_branch": "rfc-responses-walid"
+  },
+  "stack": {
+    "runtime": "node>=20",
+    "language": "JavaScript (ESM)",
+    "deps": ["@modelcontextprotocol/sdk@^1.12.1"],
+    "dev_deps": [],
+    "test_runner": "node test/run.js",
+    "package_manager": "npm",
+    "build_tool": "none (zero-build, ESM source)"
+  },
+  "modules": {
+    "src_files": 18,
+    "src_loc_approx": 3126,
+    "test_files": 2,
+    "tests_passing": 29,
+    "registered_apis_in_fixtures": 16
+  },
+  "tracked_at": {
+    "BOARD": ".ay/tracking/BOARD.md",
+    "DECISIONS": ".ay/tracking/DECISIONS.md",
+    "BLOCKERS": ".ay/tracking/BLOCKERS.md",
+    "METRICS": ".ay/tracking/METRICS.md",
+    "CHANGELOG": ".ay/tracking/CHANGELOG.md",
+    "AGENTS_LOG": ".ay/tracking/AGENTS-LOG.md",
+    "HANDOFFS": ".ay/tracking/HANDOFFS.md",
+    "PRODUCT": ".ay/PRODUCT.md",
+    "ROADMAP": ".ay/ROADMAP.md",
+    "RISKS": ".ay/RISKS.md",
+    "OPPORTUNITIES": ".ay/OPPORTUNITIES.md",
+    "LAUNCH_CHECKLIST": ".ay/LAUNCH-CHECKLIST.md",
+    "SHIP_CHECKLIST": ".ay/SHIP-CHECKLIST.md"
+  },
+  "active_sprint": "S1-security-baseline",
+  "next_milestone": "v0.2.0-security-baseline (target 2026-06-07)",
+  "agent_roster": [
+    "claude (default)",
+    "luisa (security/PM)",
+    "walid (founder/eng)"
+  ],
+  "default_lock_policy": "soft (pre-commit hook present at .claude/hooks/pre-commit-check.sh; .ay/locks/ tracked)"
 }
