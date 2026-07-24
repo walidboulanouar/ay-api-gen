@@ -20,6 +20,38 @@ function tpl(strings, ...exprs) {
 }
 
 /**
+ * Escape a spec-derived string (security scheme param names, OAuth2 flow
+ * URLs/types, scope names) for safe interpolation onto a generated `//`
+ * line comment. Unlike a `/* *\/` block comment, a `//` line comment is
+ * terminated by ANY raw newline — so a value containing `\n` breaks out
+ * onto a fresh line of *executable* generated JS (T-GEN-1). Line comments
+ * can't be "escaped" mid-line, so the only safe move is to collapse
+ * newlines before they ever reach the comment text.
+ */
+function safeLineComment(s) {
+  if (s == null) return "";
+  return String(s).replace(/\r?\n/g, " ").slice(0, 300);
+}
+
+/**
+ * Escape a spec-derived string for safe interpolation into a *generated*
+ * template literal (text embedded at codegen time inside a `...` block in
+ * the output source, e.g. cli-generator.js's printHelp()). Without this, a
+ * value containing a backtick or `${...}` breaks out of the generated
+ * string and injects arbitrary JS that runs when the generated CLI
+ * executes (T-GEN-1).
+ */
+function safeTemplateText(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\$\{/g, "\\${")
+    .replace(/\r?\n/g, " ")
+    .slice(0, 300);
+}
+
+/**
  * Generate auth code block based on detected security schemes.
  * @param {object} securitySchemes
  * @returns {string} JavaScript source code for auth handling
@@ -59,18 +91,18 @@ export function generateAuthCode(securitySchemes) {
   lines.push("// ── Auth (detected security schemes) ──");
   if (hasBearer) lines.push("//   - Bearer token (HTTP Bearer)");
   if (hasBasic) lines.push("//   - Basic auth (HTTP Basic)");
-  for (const s of hasApiKeyHeader) lines.push("//   - API Key in header: " + s.paramName);
-  for (const s of hasApiKeyQuery) lines.push("//   - API Key in query: " + s.paramName);
-  for (const s of hasApiKeyCookie) lines.push("//   - API Key in cookie: " + s.paramName);
+  for (const s of hasApiKeyHeader) lines.push("//   - API Key in header: " + safeLineComment(s.paramName));
+  for (const s of hasApiKeyQuery) lines.push("//   - API Key in query: " + safeLineComment(s.paramName));
+  for (const s of hasApiKeyCookie) lines.push("//   - API Key in cookie: " + safeLineComment(s.paramName));
   if (hasOAuth2) {
     const oauthScheme = schemes.find(s => s.type === "oauth2");
-    const flowTypes = Object.keys(oauthScheme.flows || {});
+    const flowTypes = Object.keys(oauthScheme.flows || {}).map(safeLineComment);
     lines.push("//   - OAuth2 (flows: " + flowTypes.join(", ") + ")");
     for (const [, flow] of Object.entries(oauthScheme.flows || {})) {
-      if (flow.tokenUrl) lines.push("//     tokenUrl: " + flow.tokenUrl);
-      if (flow.authorizationUrl) lines.push("//     authorizationUrl: " + flow.authorizationUrl);
+      if (flow.tokenUrl) lines.push("//     tokenUrl: " + safeLineComment(flow.tokenUrl));
+      if (flow.authorizationUrl) lines.push("//     authorizationUrl: " + safeLineComment(flow.authorizationUrl));
       if (flow.scopes && Object.keys(flow.scopes).length > 0) {
-        lines.push("//     scopes: " + Object.keys(flow.scopes).join(", "));
+        lines.push("//     scopes: " + Object.keys(flow.scopes).map(safeLineComment).join(", "));
       }
     }
   }
@@ -78,15 +110,15 @@ export function generateAuthCode(securitySchemes) {
   lines.push("// Environment variables:");
   if (hasBearer) lines.push("//   API_BEARER_TOKEN  - Bearer token for Authorization header");
   if (hasBasic) lines.push("//   API_USERNAME / API_PASSWORD  - Basic auth credentials");
-  for (const s of hasApiKeyHeader) lines.push("//   API_KEY  - Value for " + s.paramName + " header");
-  for (const s of hasApiKeyQuery) lines.push("//   API_KEY  - Value for " + s.paramName + " query param");
+  for (const s of hasApiKeyHeader) lines.push("//   API_KEY  - Value for " + safeLineComment(s.paramName) + " header");
+  for (const s of hasApiKeyQuery) lines.push("//   API_KEY  - Value for " + safeLineComment(s.paramName) + " query param");
   if (hasOAuth2) {
     lines.push("//   OAUTH_CLIENT_ID       - OAuth2 client ID");
     lines.push("//   OAUTH_CLIENT_SECRET   - OAuth2 client secret");
     lines.push("//   OAUTH_ACCESS_TOKEN    - Pre-obtained OAuth2 access token");
     const oauthScheme = schemes.find(s => s.type === "oauth2");
     const flow = Object.values(oauthScheme.flows || {})[0];
-    if (flow?.tokenUrl) lines.push("//   OAUTH_TOKEN_URL       - Token endpoint (default: " + flow.tokenUrl + ")");
+    if (flow?.tokenUrl) lines.push("//   OAUTH_TOKEN_URL       - Token endpoint (default: " + safeLineComment(flow.tokenUrl) + ")");
   }
   lines.push("");
 
@@ -157,14 +189,14 @@ export function generateAuthCode(securitySchemes) {
   }
 
   for (const s of hasApiKeyHeader) {
-    lines.push("  // API Key in header: " + s.paramName);
+    lines.push("  // API Key in header: " + safeLineComment(s.paramName));
     lines.push("  if (process.env.API_KEY) {");
     lines.push("    headers[" + JSON.stringify(s.paramName) + "] = process.env.API_KEY;");
     lines.push("  }");
   }
 
   for (const s of hasApiKeyCookie) {
-    lines.push("  // API Key in cookie: " + s.paramName);
+    lines.push("  // API Key in cookie: " + safeLineComment(s.paramName));
     lines.push("  if (process.env.API_KEY) {");
     lines.push("    headers[\"Cookie\"] = " + JSON.stringify(s.paramName + "=") + " + process.env.API_KEY;");
     lines.push("  }");
@@ -186,7 +218,7 @@ export function generateAuthCode(securitySchemes) {
   lines.push("  const params = {};");
 
   for (const s of hasApiKeyQuery) {
-    lines.push("  // API Key in query: " + s.paramName);
+    lines.push("  // API Key in query: " + safeLineComment(s.paramName));
     lines.push("  if (process.env.API_KEY) {");
     lines.push("    params[" + JSON.stringify(s.paramName) + "] = process.env.API_KEY;");
     lines.push("  }");
@@ -223,8 +255,8 @@ export function generateEnvDocs(securitySchemes) {
     lines.push("  API_USERNAME      Basic auth username");
     lines.push("  API_PASSWORD      Basic auth password");
   }
-  for (const s of hasApiKeyHeader) lines.push("  API_KEY           " + s.paramName + " header value");
-  for (const s of hasApiKeyQuery) lines.push("  API_KEY           " + s.paramName + " query param value");
+  for (const s of hasApiKeyHeader) lines.push("  API_KEY           " + safeTemplateText(s.paramName) + " header value");
+  for (const s of hasApiKeyQuery) lines.push("  API_KEY           " + safeTemplateText(s.paramName) + " query param value");
   if (hasOAuth2) {
     lines.push("  OAUTH_CLIENT_ID       OAuth2 client ID");
     lines.push("  OAUTH_CLIENT_SECRET   OAuth2 client secret");

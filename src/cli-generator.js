@@ -71,6 +71,7 @@ export function generateCLI(parsed, options = {}) {
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBaseUrl, assertHostAllowed } from "./url-guard.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -99,7 +100,9 @@ function loadEnv() {
 loadEnv();
 
 // ── Config ──
-const BASE_URL = process.env.API_BASE_URL || ${JSON.stringify(baseUrl)};
+const SPEC_BASE_URL = ${JSON.stringify(baseUrl)};
+const BASE_URL = resolveBaseUrl(SPEC_BASE_URL, process.env.API_BASE_URL);
+await assertHostAllowed(SPEC_BASE_URL);
 
 ${generateAuthCode(securitySchemes)}
 
@@ -132,6 +135,7 @@ async function callApi(method, pathTemplate, params, bodyParams) {
   if (bodyParams && Object.keys(bodyParams).length > 0 && method !== "GET" && method !== "HEAD") {
     fetchOpts.body = JSON.stringify(bodyParams);
   }
+  await assertHostAllowed(url);
   const res = await fetch(url, fetchOpts);
   const text = await res.text();
   let data;

@@ -14,6 +14,7 @@ import { safeDescription } from "../src/desc-sanitize.js";
 import { resolveBaseUrl, assertHostAllowed } from "../src/url-guard.js";
 import { lintSpec, parseAcceptRisks } from "../src/spec-linter.js";
 import { injectSettings } from "../src/settings-injector.js";
+import { parseYaml } from "../src/yaml-parser.js";
 import { mkdtempSync, mkdirSync, writeFileSync as fsWriteFileSync, readFileSync as fsReadFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
@@ -235,34 +236,54 @@ async function testSecurityHardening() {
   assert(true, "T-ING-2: AY_ALLOW_PRIVATE_HOSTS=1 opts out of the deny-list");
   delete process.env.AY_ALLOW_PRIVATE_HOSTS;
   assert(mcpSrc.includes("assertHostAllowed("), "T-ING-2: mcp-generator emits assertHostAllowed() calls");
+  assert(cliSrc.includes("resolveBaseUrl(") && cliSrc.includes("assertHostAllowed("), "T-ING-2/T-RUN-1: cli-generator emits resolveBaseUrl()/assertHostAllowed() calls (S2 gap closure)");
 
   // T-SET-1: settings namespace + collision policy
   const tmpDir = mkdtempSync(resolvePath(tmpdir(), "ay-settings-test-"));
   mkdirSync(resolvePath(tmpDir, ".claude"), { recursive: true });
   fsWriteFileSync(resolvePath(tmpDir, ".claude/settings.local.json"), JSON.stringify({ mcpServers: { foo: { command: "other-tool" } } }), "utf-8");
 
-  const r1 = injectSettings("/tmp/server.js", "bar", { projectDir: tmpDir, nonInteractive: true });
+  const r1 = await injectSettings("/tmp/server.js", "bar", { projectDir: tmpDir, nonInteractive: true });
   assert(r1.key === "ay-api-gen:bar", "T-SET-1: injectSettings writes under the ay-api-gen: namespace");
 
   let refusedUnprefixed = false;
   try {
-    injectSettings("/tmp/server.js", "foo", { projectDir: tmpDir, nonInteractive: true });
+    await injectSettings("/tmp/server.js", "foo", { projectDir: tmpDir, nonInteractive: true });
   } catch (e) { refusedUnprefixed = /Refusing to write/.test(e.message); }
   assert(refusedUnprefixed, "T-SET-1: injectSettings refuses to shadow an unprefixed entry from another source");
 
-  injectSettings("/tmp/server.js", "foo", { projectDir: tmpDir, nonInteractive: true, force: true });
+  await injectSettings("/tmp/server.js", "foo", { projectDir: tmpDir, nonInteractive: true, force: true });
   const settingsAfter = JSON.parse(fsReadFileSync(resolvePath(tmpDir, ".claude/settings.local.json"), "utf-8"));
   assert(settingsAfter.mcpServers.foo.command === "other-tool", "T-SET-1: --force does not touch the original unprefixed entry");
   assert(!!settingsAfter.mcpServers["ay-api-gen:foo"], "T-SET-1: --force writes the namespaced entry");
 
   let refusedCollision = false;
   try {
-    injectSettings("/tmp/server2.js", "bar", { projectDir: tmpDir, nonInteractive: true });
+    await injectSettings("/tmp/server2.js", "bar", { projectDir: tmpDir, nonInteractive: true });
   } catch (e) { refusedCollision = /already exists/.test(e.message); }
   assert(refusedCollision, "T-SET-1: injectSettings refuses to overwrite same-namespace entry without --force");
 
-  const r3 = injectSettings("/tmp/x.js", "Foo/Bar Baz", { projectDir: tmpDir, nonInteractive: true });
+  const r3 = await injectSettings("/tmp/x.js", "Foo/Bar Baz", { projectDir: tmpDir, nonInteractive: true });
   assert(r3.key === "ay-api-gen:Foo_Bar_Baz", "T-SET-1: injectSettings sanitizes spec-derived names for the settings key");
+
+  // T-SET-2: confirmOverwrite is properly awaited (a Promise return value must
+  // not be treated as truthy just because it exists — that would silently
+  // bypass the confirmation prompt regardless of the user's actual answer).
+  let asyncConfirmCalled = false;
+  const r4 = await injectSettings("/tmp/server3.js", "bar", {
+    projectDir: tmpDir, nonInteractive: false,
+    confirmOverwrite: async (nsKey) => { asyncConfirmCalled = true; return true; },
+  });
+  assert(asyncConfirmCalled && r4.key === "ay-api-gen:bar", "T-SET-2: async confirmOverwrite returning true is awaited and honored");
+
+  let deniedByAsyncConfirm = false;
+  try {
+    await injectSettings("/tmp/server4.js", "bar", {
+      projectDir: tmpDir, nonInteractive: false,
+      confirmOverwrite: async () => false,
+    });
+  } catch (e) { deniedByAsyncConfirm = /Aborted/.test(e.message); }
+  assert(deniedByAsyncConfirm, "T-SET-2: async confirmOverwrite returning false is awaited and still aborts (not treated as truthy Promise)");
 
   // T-API-1 / T-API-2: spec-linter
   const dirtySpec = {
@@ -286,6 +307,160 @@ async function testSecurityHardening() {
   assert(parseAcceptRisks("T-API-1:POST_charge").has("T-API-1:POST_charge"), "spec-linter: parseAcceptRisks parses comma-separated list");
 }
 
+/**
+ * S2 sprint: T-GEN-1 audit regression tests.
+ * Same injection class as the S1 JSDoc/template-literal fixes, but found in
+ * src/auth-codegen.js (shared by both generators) and src/env-generator.js —
+ * neither was covered by S1's scope. All local fixtures, no network.
+ */
+function noBareInjectedStatement(src) {
+  return !src.split("\n").some(l => /^require\(/.test(l.trim()));
+}
+
+async function testGenInterpolationHardening() {
+  console.log("\n--- T-GEN-1 Interpolation Audit Regression Tests (S2) ---");
+
+  const NEWLINE_PAYLOAD = "X-Key\nrequire('child_process').execSync('touch /tmp/pwned_gen1');\n//";
+  const BACKTICK_PAYLOAD = "X-Key`+require('child_process').execSync('touch /tmp/pwned_gen2')+`";
+
+  const base = {
+    baseUrl: "https://api.example.com",
+    info: { title: "T", version: "1.0.0" },
+    endpoints: [{
+      toolName: "get_thing", method: "GET", path: "/thing", summary: "get",
+      parameters: [], security: [], cliCommand: { resource: "thing", action: "get" },
+    }],
+  };
+
+  // auth-codegen.js generateAuthCode(): raw "// comment" + s.paramName concatenation
+  // — a bare newline breaks the comment and the payload becomes a real top-level statement.
+  const newlineParsed = { ...base, securitySchemes: { apiKeyAuth: { type: "apiKey", in: "header", paramName: NEWLINE_PAYLOAD } } };
+  const mcpNewline = generateMCPServer(newlineParsed, { name: "evil1" });
+  assert(noBareInjectedStatement(mcpNewline), "T-GEN-1: auth-codegen apiKey paramName newline no longer breaks out of // comment (mcp-generator)");
+  const cliNewline = generateCLI(newlineParsed, { name: "evil1" });
+  assert(noBareInjectedStatement(cliNewline), "T-GEN-1: auth-codegen apiKey paramName newline no longer breaks out of // comment (cli-generator)");
+
+  // Same bug via OAuth2 flow.tokenUrl
+  const oauthNewlineParsed = {
+    ...base,
+    securitySchemes: { oauth: { type: "oauth2", flows: { clientCredentials: { tokenUrl: NEWLINE_PAYLOAD, scopes: {} } } } },
+  };
+  assert(noBareInjectedStatement(generateMCPServer(oauthNewlineParsed, { name: "evil1b" })), "T-GEN-1: auth-codegen OAuth2 flow.tokenUrl newline no longer breaks out of // comment");
+
+  // auth-codegen.js generateEnvDocs(): embedded raw inside cli-generator's
+  // nested printHelp() template literal — needs backtick/${} escaping, not just newline safety.
+  const backtickParsed = { ...base, securitySchemes: { apiKeyAuth: { type: "apiKey", in: "header", paramName: BACKTICK_PAYLOAD } } };
+  const cliBacktick = generateCLI(backtickParsed, { name: "evil2" });
+  assert(cliBacktick.includes("\\`+require") || !cliBacktick.includes("`+require"), "T-GEN-1: auth-codegen generateEnvDocs backtick/${} breakout escaped, not raw, in generated CLI");
+
+  // env-generator.js: newline in spec-derived fields could spoof an uncommented .env.example line
+  const { generateEnvExample } = await import("../src/env-generator.js");
+  const envContent = generateEnvExample(
+    { apiKeyAuth: { type: "apiKey", in: "header", paramName: "X-Key\nAPI_KEY=attacker-controlled-value" } },
+    "https://api.example.com",
+    { title: "T" }
+  );
+  const spoofedLine = envContent.split("\n").find(l => l.trim() === "API_KEY=attacker-controlled-value");
+  assert(!spoofedLine, "T-GEN-1: env-generator.js does not let spec data spoof an uncommented .env.example line");
+
+  // All generated sources must still be syntactically valid after escaping
+  const { execSync } = await import("node:child_process");
+  const { writeFileSync, mkdtempSync } = await import("node:fs");
+  const tmp = mkdtempSync(resolvePath(tmpdir(), "ay-gen-check-"));
+  for (const [name, src] of [["mcp1", mcpNewline], ["cli1", cliNewline], ["cli2", cliBacktick]]) {
+    const p = resolvePath(tmp, `${name}.js`);
+    writeFileSync(p, src);
+    try {
+      execSync(`node --check ${JSON.stringify(p)}`, { stdio: "pipe" });
+      assert(true, `T-GEN-1: generated ${name}.js is still syntactically valid after escaping`);
+    } catch (e) {
+      assert(false, `T-GEN-1: generated ${name}.js syntax check failed: ${e.message}`);
+    }
+  }
+}
+
+/**
+ * S2 sprint: YAML adversarial mini-corpus (S2-06).
+ * src/yaml-parser.js is a deliberately minimal, zero-dep YAML subset parser
+ * (documented as NOT handling anchors/aliases, complex keys, or true
+ * multi-line block scalars). The bar here is not "parses every case
+ * correctly" — it's "never throws, hangs, or silently produces something
+ * that breaks a downstream consumer" on adversarial input. Hand-built,
+ * not the full external yaml-test-suite (that needs a network fetch).
+ */
+async function testYamlAdversarialCorpus() {
+  console.log("\n--- YAML Adversarial Mini-Corpus (S2) ---");
+
+  const cases = [
+    { name: "tab indentation (invalid YAML)", yaml: "openapi: 3.0.0\npaths:\n\t/users:\n\t\tget: {}\n" },
+    { name: "duplicate keys", yaml: "openapi: 3.0.0\ninfo:\n  title: First\n  title: Second\n" },
+    { name: "anchors/aliases (unsupported, must not throw)", yaml: "defaults: &defaults\n  type: string\nfield:\n  <<: *defaults\n" },
+    { name: "deeply nested flow arrays", yaml: `a: ${"[".repeat(200)}1${"]".repeat(200)}` },
+    { name: "multi-document YAML (---)", yaml: "openapi: 3.0.0\n---\nopenapi: 3.0.1\n" },
+    { name: "unicode in strings", yaml: 'title: "API éèê 中文 😀"\nversion: "1.0"\n' },
+    { name: "comment-like text inside quotes", yaml: 'title: "not a # comment"\nversion: "1.0"\n' },
+    { name: "colon inside unquoted value (URL)", yaml: "servers:\n  - url: https://api.example.com:8443/v1\n" },
+    { name: "empty file", yaml: "" },
+    { name: "whitespace-only file", yaml: "   \n\t\n   \n" },
+    { name: "CRLF line endings", yaml: "openapi: 3.0.0\r\ninfo:\r\n  title: CRLF Test\r\n" },
+    { name: "very deep block nesting (stack safety)", yaml: Array.from({ length: 300 }, (_, i) => "  ".repeat(i) + "a:").join("\n") },
+    { name: "null/tilde/bool coercion edge cases", yaml: "a: ~\nb: null\nc: TRUE\nd: False\ne: 1.0\nf: 007\n" },
+  ];
+
+  for (const c of cases) {
+    let threw = false;
+    let result;
+    try {
+      result = parseYaml(c.yaml);
+    } catch {
+      threw = true;
+    }
+    assert(!threw, `YAML corpus: "${c.name}" does not throw`);
+  }
+
+  // Positive case: a realistically-shaped OpenAPI YAML doc must still parse
+  // correctly end-to-end, including through extractEndpoints().
+  const validYaml = `
+openapi: 3.0.3
+info:
+  title: YAML Positive Case
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com:8443/v1
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      summary: "List widgets" # trailing comment
+      responses:
+        "200":
+          description: ok
+  /widgets/{id}:
+    get:
+      operationId: getWidget
+      summary: Get a widget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+`.trim();
+
+  const parsedYaml = parseYaml(validYaml);
+  assert(parsedYaml !== null, "YAML corpus: valid OpenAPI YAML parses to a non-null object");
+  assert(parsedYaml?.info?.title === "YAML Positive Case", "YAML corpus: nested info.title parses correctly");
+  assert(parsedYaml?.servers?.[0]?.url === "https://api.example.com:8443/v1", "YAML corpus: URL with colon+port inside an array item parses correctly");
+  assert(Object.keys(parsedYaml?.paths || {}).length === 2, "YAML corpus: both paths are present");
+
+  const endpoints = extractEndpoints(parsedYaml).endpoints;
+  assert(endpoints.length === 2, "YAML corpus: extractEndpoints() finds both operations from the YAML-parsed spec");
+  assert(endpoints.some(e => e.toolName === "list_widgets"), "YAML corpus: operationId-derived tool name survives the YAML round-trip");
+}
+
 // ── Run all tests ──
 async function run() {
   console.log("ay-api-gen — End-to-End Tests\n");
@@ -294,6 +469,22 @@ async function run() {
     await testSecurityHardening();
   } catch (err) {
     console.error(`\nFATAL (security hardening): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testGenInterpolationHardening();
+  } catch (err) {
+    console.error(`\nFATAL (T-GEN-1 audit): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testYamlAdversarialCorpus();
+  } catch (err) {
+    console.error(`\nFATAL (YAML corpus): ${err.message}`);
     console.error(err.stack);
     failed++;
   }

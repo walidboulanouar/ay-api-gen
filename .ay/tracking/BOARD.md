@@ -1,6 +1,6 @@
 # Pipeline Board
 
-> Updated 2026-07-25 · branch `ay-framework` · sprint **S1 — security baseline**
+> Updated 2026-07-25 · branch `ay-framework` · sprints **S1 (security baseline)** and **S2 (hardening + coverage)** both landed
 > Statuses: BACKLOG / READY / IN PROGRESS / BLOCKED / IN REVIEW / DONE
 > See [`../ROADMAP.md`](../ROADMAP.md) for milestone view. See [`../tasks/`](../tasks/) for execution detail.
 
@@ -61,18 +61,19 @@ Source files exist; need integration tests + docs (treated as tech debt — see 
 |---|-------|-----------|
 | 17 | Publish to npm | `npm login` from Walid; package name reservation; **must land S1 first** so we ship hardened |
 
-## Ready (not yet started)
+## S2 sprint — hardening + coverage (landed 2026-07-25)
 
-| # | Title | Sprint | Notes |
-|---|-------|--------|-------|
-| S2-01 | Integration tests for v0.1.1 features | S2 | Tech debt — no tests for shipped code |
-| S2-02 | Pin exact versions in generated `package.json` (T-GEN-3 / T-SUP-2) | S2 | DONE for `@modelcontextprotocol/sdk` (own package.json + generated template both now `1.29.0` exact, `.npmrc` has `save-exact=true`). CI workflow `regen-apis.yml` still uses unpinned `npx ay-api-gen` — blocked on npm publish (Task 17). |
-| S2-03 | Audit every spec-derived interpolation (T-GEN-1) | S2 | Exhaustive, not implied |
-| S2-04 | Audit `settings-injector.js` for field injection (T-SET-2) | S2 | |
-| S2-05 | Replace custom YAML parser with `yaml` (Aro) — after corpus | S3 | Blocked on corpus existing |
-| S2-06 | YAML adversarial corpus + test runner | S2 | `yaml-test-suite` start |
-| S2-07 | `ay-api-gen audit --baseline` (T0 free runner) | S2 | Free demand-gen funnel |
-| 30 | Public API catalog (`serve github`, `serve stripe`) | S3 | Curated, signed specs only |
+| # | Title | Sprint | Status | Notes |
+|---|-------|--------|--------|-------|
+| S2-01 | Integration tests for v0.1.1 features | S2 | DONE | `test/integration-cli.js` — real CLI child-process tests for diff/filter/slim/doctor/discover/init/audit, 50 tests. Ephemeral local HTTP fixture server for doctor/discover, no real external network. |
+| S2-02 | Pin exact versions in generated `package.json` (T-GEN-3 / T-SUP-2) | S2 | DONE (S1) for `@modelcontextprotocol/sdk`; CI workflow still unpinned, blocked on Task 17 |
+| S2-03 | Audit every spec-derived interpolation (T-GEN-1) | S2 | DONE | Found + fixed 2 CRITICAL (auth-codegen.js `//`-comment newline injection + backtick/`${}` breakout in generated CLI env docs, present in mcp-generator AND cli-generator since both share auth-codegen.js) + 1 LOW (env-generator.js content spoofing). See HANDOFFS.md 2026-07-25. |
+| S2-04 | Audit `settings-injector.js` for field injection (T-SET-2) | S2 | DONE | No HIGH/CRITICAL found — S1-03's namespacing + bracket-assignment write pattern holds up against path traversal, env injection, prototype pollution. Fixed one functional bug (dead `confirmOverwrite` interactive-prompt path) found along the way. |
+| S2-05 | Replace custom YAML parser with `yaml` (Aro) — after corpus | S3 | Still blocked — corpus now exists (S2-06) but this is a larger dependency-adoption decision, deferred to S3 |
+| S2-06 | YAML adversarial corpus + test runner | S2 | DONE (scoped) | 13 hand-built adversarial cases + 1 positive round-trip case in `test/run.js`. Not the full external `yaml-test-suite` (would need a network fetch) — a hand-built mini-corpus covering the gotcha classes that matter for OpenAPI YAML. |
+| S2-07 | `ay-api-gen audit --baseline` (T0 free runner) | S2 | DONE | `bin/ay-api-gen.js` — free, no license check, wraps `spec-linter.js`. Supports `--mode=b` + `--accept-risks` for blocking mode, same contract as `generate`. |
+| Gap closure | Extend url-guard.js SSRF/host-rebind protections to `cli-generator.js`'s generated standalone CLI | S2 | DONE | Closes the gap logged in S1's HANDOFFS.md — the generated CLI (`cli.js`) now gets `resolveBaseUrl`/`assertHostAllowed` same as the generated MCP server and `runtime/cli.js`. |
+| 30 | Public API catalog (`serve github`, `serve stripe`) | S3 | - | Curated, signed specs only |
 
 ## Backlog — commercial / scale
 

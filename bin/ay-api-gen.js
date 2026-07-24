@@ -54,6 +54,8 @@ function parseArgs(argv) {
       opts.acceptRisks = argv[++i];
     } else if (arg === "--mode") {
       opts.mode = argv[++i];
+    } else if (arg === "--baseline") {
+      opts.baseline = true;
     } else if (!arg.startsWith("-")) {
       opts.positional.push(arg);
     }
@@ -73,6 +75,7 @@ COMMANDS
   ay-api-gen run <spec> <resource> <action>    Call API directly (no codegen)
   ay-api-gen list                              List all generated APIs
   ay-api-gen doctor                            Health check all registered APIs
+  ay-api-gen audit --baseline <spec>           Free T0 static security lint (no license needed)
   ay-api-gen diff <old-spec> <new-spec>        Compare two spec versions
   ay-api-gen remove <name>                     Remove a generated API from registry
   ay-api-gen regen [name|--all]                Regenerate from saved config
@@ -308,7 +311,7 @@ async function cmdGenerate(source, opts) {
   mkdirSync(outputDir, { recursive: true });
 
   // Copy runtime security helpers into the output dir — the generated
-  // server is standalone and imports these by relative path.
+  // server and CLI are standalone and import these by relative path.
   for (const helper of ["truncate.js", "desc-sanitize.js", "url-guard.js"]) {
     const src = resolve(__dirname, "../src", helper);
     writeFileSync(resolve(outputDir, helper), readFileSync(src, "utf-8"), "utf-8");
@@ -375,9 +378,17 @@ async function cmdGenerate(source, opts) {
   // Auto-register in settings.json
   if (!opts.noSettings) {
     try {
-      const { settingsPath, key } = injectSettings(mcpPath, apiName, {
+      const nonInteractive = !process.stdout.isTTY || !process.stdin.isTTY;
+      const { settingsPath, key } = await injectSettings(mcpPath, apiName, {
         force: opts.force,
-        nonInteractive: !process.stdout.isTTY,
+        nonInteractive,
+        confirmOverwrite: nonInteractive ? undefined : async (nsKey) => {
+          const { createInterface } = await import("node:readline");
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          const answer = await new Promise(res => rl.question(`"${nsKey}" already exists in settings.json. Overwrite? [y/N]: `, res));
+          rl.close();
+          return /^y(es)?$/i.test(answer.trim());
+        },
       });
       console.log(`Settings:   ${settingsPath}`);
       console.log(`  -> MCP server "${key}" registered.`);
@@ -481,6 +492,44 @@ async function main() {
     const { runDiff, printDiff } = await import("../src/diff.js");
     const result = await runDiff(oldSpec, newSpec);
     printDiff(result);
+    return;
+  }
+
+  // Audit: free T0 static spec-lint baseline (ADR-010). No license, no network
+  // probing beyond fetching the spec itself, no code generation.
+  if (cmd === "audit") {
+    const specSource = opts.positional[1];
+    if (!specSource) { console.error("Usage: ay-api-gen audit --baseline <spec-url-or-file>"); process.exit(1); }
+
+    const { loadSpec, extractEndpoints } = await import("../src/parser.js");
+    const { lintSpec, printLintFindings, parseAcceptRisks } = await import("../src/spec-linter.js");
+
+    const spec = await loadSpec(specSource);
+    const parsed = extractEndpoints(spec);
+
+    console.log(`\nay-api-gen audit --baseline (T0 static analysis, free)\n`);
+    console.log(`  API: ${parsed.info.title || specSource} (${parsed.endpoints.length} endpoints)`);
+
+    const findings = lintSpec(parsed);
+    if (findings.length === 0) {
+      console.log(`\n  No T0 findings. ${parsed.endpoints.length} endpoint(s) checked.\n`);
+      return;
+    }
+
+    printLintFindings(findings);
+    console.log();
+
+    if (opts.mode === "b") {
+      const accepted = parseAcceptRisks(opts.acceptRisks);
+      const blocking = findings.filter(f =>
+        (f.severity === "high" || f.severity === "critical") &&
+        !accepted.has(`${f.id}:${f.endpointSlug}`)
+      );
+      if (blocking.length > 0) {
+        console.error(`[spec-lint] ${blocking.length} blocking finding(s) in --mode=b. Pass --accept-risks=<id>:<endpoint-slug>,... to override.`);
+        process.exit(1);
+      }
+    }
     return;
   }
 

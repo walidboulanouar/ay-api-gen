@@ -4,6 +4,38 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: S2 hardening + coverage sprint (autonomous, continuation of same-day S1 session)
+
+**Status at end of session: S2 sprint (S2-01, T-GEN-1, T-SET-2, S1-gap-closure, S2-06, S2-07) complete — all 6 items the user asked for, including the two "if time allows" items. No wall hit.**
+
+This session picked up directly from the S1 session logged below (same day, user reviewed the S1 work and asked for S2 by name). Full detail is in `.ay/tracking/HANDOFFS.md` (2026-07-25 01:00 entry) — this is the condensed version.
+
+### What I did
+
+1. **Two audits run as parallel forked subagents** (per the user's explicit request to parallelize), findings then implemented by me directly, not delegated:
+   - **T-GEN-1** (systematic spec-interpolation audit): found the SAME injection class S1 fixed in `mcp-generator.js`/`cli-generator.js`, unaddressed in `src/auth-codegen.js` (shared by both generators — a raw newline in an apiKey `paramName` or OAuth2 `flow.tokenUrl` breaks a `//` comment and becomes an executable statement in BOTH generated outputs) and a backtick/`${}` breakout in `generateEnvDocs()`'s output landing inside `cli-generator.js`'s nested template literal. Also a LOW-severity content-spoofing issue in `env-generator.js`. All fixed; see `.ay/tracking/HANDOFFS.md` for the exact helper functions added (`safeLineComment()`, `safeTemplateText()`, `safeLine()`).
+   - **T-SET-2** (settings-injector.js field injection): no HIGH/CRITICAL survived scrutiny — S1-03's namespace-prefix + bracket-assignment design holds up against path traversal, env injection, and prototype pollution. Found one real bug: the interactive `confirmOverwrite` prompt was dead code (a Promise is always truthy, so an unawaited async confirm would have silently bypassed the prompt) — fixed by making `injectSettings()` async and wiring a real `readline` prompt.
+2. **Closed the S1 known-gap**: `cli-generator.js`'s generated standalone CLI now has the same `url-guard.js` SSRF/host-rebind protections as the generated MCP server. Verified live against a `169.254.169.254` (cloud metadata) fixture — the generated CLI now refuses before any `fetch`.
+3. **`test/integration-cli.js`** (new, 50 tests) — real child-process tests against the actual CLI for doctor/init/discover/diff/slim/filter/audit, previously 0% covered. Two infra bugs worth remembering if you touch this file: (a) `execFileSync` blocks the whole parent event loop, which deadlocks against an in-process ephemeral fixture HTTP server — had to switch to async `spawn`; (b) writing a whole scripted stdin transcript in one `write()+end()` unreliably drops lines after the first `readline.question()` in `init-wizard.js` — fixed by staggering writes 200ms apart (`opts.inputLines` in `runCLI()`).
+4. **`ay-api-gen audit --baseline <spec>`** (S2-07, ADR-010) — free, no license, wraps the `spec-linter.js` already built in S1-07.
+5. **13-case hand-built YAML adversarial mini-corpus** (S2-06) in `test/run.js` — not the full external `yaml-test-suite` (needs network), a scoped set covering tab indentation, duplicate keys, anchors, deep nesting (stack safety), multi-document, unicode, CRLF, etc., plus a positive round-trip case.
+
+### Verification
+
+```bash
+node test/run.js              # 96/96 (first ~57 are network-free; testParser() still fetches Petstore)
+node test/integration-cli.js  # 50/50, fully network-free (ephemeral local fixture servers only)
+```
+
+### What's left
+
+- **B-09** (new, P3): unlocked read-modify-write of `settings.local.json` — noted during T-SET-2, not fixed (needs a file lock, not attacker-triggerable via spec content).
+- **T-GEN-2** (mass-assignment heuristic) still open per the original threat model — not attempted this session.
+- **S2-05** (replace custom YAML parser with a real `yaml` dependency) still deferred to S3 — the corpus now exists but the dependency-adoption decision is separate and bigger.
+- Everything else from the prior session's "What's left" (S1-08 Luisa sign-off, S3 backlog, Task 17 publish blockers) is unchanged — see the entry below.
+
+---
+
 ## 2026-07-25 — Session: S1 security-baseline sprint (autonomous)
 
 **Status at end of session: S1 sprint (S1-01 through S1-07) complete. No wall hit — could keep going into S2, stopped because the S1 sprint was the clearly-scoped unit of work defined in `.ay/tracking/BOARD.md`.**

@@ -15,6 +15,15 @@
 ### Fixed (supply chain)
 - `@modelcontextprotocol/sdk` pinned to exact `1.29.0` in both this package's `package.json` and the generated-output `package.json` template (was `^1.12.1`, unpinned). Added `.npmrc` with `save-exact=true`.
 
+### Added (S2 sprint, landed 2026-07-25)
+- Fixed T-GEN-1 gaps beyond S1's scope: `auth-codegen.js` (shared by both generators) had the same JSDoc/template-literal injection class as S1 fixed, in two new places — raw newline injection breaking `//` line comments in `generateAuthCode()` (`safeLineComment()`), and backtick/`${}` breakout via `generateEnvDocs()`'s output landing inside `cli-generator.js`'s nested `printHelp()` template literal (`safeTemplateText()`). Also hardened `env-generator.js`'s `.env.example` output against the same class of content-spoofing (`safeLine()`).
+- Fixed T-SET-2 finding: the interactive `confirmOverwrite` prompt in `settings-injector.js` was dead code (never actually reachable) — wired a real `readline` prompt in `bin/ay-api-gen.js`; `injectSettings()` is now `async` to properly `await` it.
+- Closed the S1 known-gap: `cli-generator.js`'s generated standalone CLI now gets the same `resolveBaseUrl`/`assertHostAllowed` SSRF/host-rebind protections as the generated MCP server and `runtime/cli.js`.
+- `test/integration-cli.js` (new) — 50 real integration tests against the actual CLI (child-process spawns, not mocks) covering doctor/init/discover/diff/slim/filter/audit — previously 0% covered.
+- `ay-api-gen audit --baseline <spec>` (ADR-010) — free, no license check, T0 static spec-lint wrapping `spec-linter.js`. Supports `--mode=b`/`--accept-risks`.
+- 13-case hand-built YAML adversarial mini-corpus in `test/run.js` (`testYamlAdversarialCorpus()`) — tab indentation, duplicate keys, anchors/aliases, deep nesting, multi-document, unicode, CRLF, stack-safety at 300-level nesting, and more, plus a positive end-to-end round-trip case.
+- `test:integration` and `test:all` npm scripts.
+
 ## [0.1.1] — 2026-05-11
 
 ### Added (source landed, integration tests pending)

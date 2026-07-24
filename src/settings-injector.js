@@ -28,9 +28,11 @@ function sanitize(name) {
  * @param {string} serverPath - Absolute path to generated MCP server file
  * @param {string} name - Server name (spec-derived, untrusted)
  * @param {object} options - { projectDir, force, nonInteractive, confirmOverwrite }
- * @returns {{ settingsPath: string, key: string }}
+ *   confirmOverwrite may be sync or async — always awaited, so a Promise
+ *   return value is resolved (never treated as truthy just for existing).
+ * @returns {Promise<{ settingsPath: string, key: string }>}
  */
-export function injectSettings(serverPath, name, options = {}) {
+export async function injectSettings(serverPath, name, options = {}) {
   const projectDir = options.projectDir || process.cwd();
 
   // Try project-local settings first
@@ -69,7 +71,7 @@ export function injectSettings(serverPath, name, options = {}) {
     if (options.nonInteractive) {
       throw new Error(`"${nsKey}" already exists. Pass --force to overwrite.`);
     }
-    const confirmed = options.confirmOverwrite ? options.confirmOverwrite(nsKey) : false;
+    const confirmed = options.confirmOverwrite ? await options.confirmOverwrite(nsKey) : false;
     if (!confirmed) {
       throw new Error(`Aborted: "${nsKey}" already exists. Pass --force to overwrite.`);
     }
