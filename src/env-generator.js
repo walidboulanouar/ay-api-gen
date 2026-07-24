@@ -10,7 +10,7 @@
  * @param {object} info - API info from spec
  * @returns {string}
  */
-export function generateEnvExample(securitySchemes, baseUrl, info = {}) {
+export function generateEnvExample(securitySchemes, baseUrl, info = {}, opts = {}) {
   const lines = [];
   const schemes = Object.values(securitySchemes || {});
 
@@ -19,7 +19,19 @@ export function generateEnvExample(securitySchemes, baseUrl, info = {}) {
   lines.push("");
 
   lines.push("# Base URL (override if using a different environment)");
+  lines.push("# Must be same scheme+host as the spec's base URL unless you also set");
+  lines.push("# API_BASE_URL_ALLOW_HOST_OVERRIDE=1 below (see Security section).");
   lines.push("# API_BASE_URL=" + baseUrl);
+  lines.push("");
+
+  lines.push("# ── Security ──");
+  lines.push("# By default, API_BASE_URL may only change the path, not the host — this");
+  lines.push("# stops a settings.json edit from silently rebinding your credentials to");
+  lines.push("# an attacker host. Set to 1 only if you intend a genuine cross-host swap.");
+  lines.push((opts.allowHostOverride ? "" : "# ") + "API_BASE_URL_ALLOW_HOST_OVERRIDE=1");
+  lines.push("# Requests to private/link-local/cloud-metadata IPs are blocked by default.");
+  lines.push("# Set to 1 only for a legitimate intranet API.");
+  lines.push("# AY_ALLOW_PRIVATE_HOSTS=1");
   lines.push("");
 
   if (schemes.length === 0) {

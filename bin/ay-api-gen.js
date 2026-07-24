@@ -12,7 +12,7 @@
  */
 
 import { resolve, dirname } from "node:path";
-import { mkdirSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +46,14 @@ function parseArgs(argv) {
       opts.maxTools = parseInt(argv[++i], 10);
     } else if (arg === "--verbose" || arg === "-v") {
       opts.verbose = true;
+    } else if (arg === "--force") {
+      opts.force = true;
+    } else if (arg === "--allow-host-override") {
+      opts.allowHostOverride = true;
+    } else if (arg === "--accept-risks") {
+      opts.acceptRisks = argv[++i];
+    } else if (arg === "--mode") {
+      opts.mode = argv[++i];
     } else if (!arg.startsWith("-")) {
       opts.positional.push(arg);
     }
@@ -82,6 +90,10 @@ OPTIONS
   --token-budget <n>   Token budget for --slim (default: 8000)
   --max-tools <n>      Max tools for --slim (default: 50)
   --verbose, -v        Verbose output
+  --force              Overwrite colliding settings.json entries (see Security)
+  --allow-host-override  Allow API_BASE_URL to rebind to a different host
+  --accept-risks <ids> Comma-separated spec-linter findings to downgrade (mode b), e.g. T-API-1:POST_charge
+  --mode <a|b>         Spec-lint mode: a=warn-only (default), b=block on HIGH/CRITICAL
   --help, -h           Show this help
 
 EXAMPLES
@@ -176,9 +188,9 @@ async function cmdRegen(name, opts) {
   for (const api of toRegen) {
     console.log(`\nRegenerating: ${api.name} from ${api.source}`);
     await cmdGenerate(api.source, {
+      ...opts,
       name: api.name,
       output: api.outputDir,
-      noSettings: opts.noSettings,
     });
   }
 }
@@ -216,6 +228,8 @@ async function cmdGenerate(source, opts) {
   const { generateEnvExample } = await import("../src/env-generator.js");
   const { injectSettings } = await import("../src/settings-injector.js");
   const { registerAPI } = await import("../src/registry.js");
+  const { assertHostAllowed } = await import("../src/url-guard.js");
+  const { lintSpec, printLintFindings, parseAcceptRisks } = await import("../src/spec-linter.js");
 
   console.log(`Parsing OpenAPI spec: ${source}`);
 
@@ -237,6 +251,26 @@ async function cmdGenerate(source, opts) {
 
   // Parse
   const parsed = extractEndpoints(spec);
+
+  // Refuse to generate a server pointed at a private/metadata IP (T-ING-2)
+  await assertHostAllowed(parsed.baseUrl);
+
+  // Spec-lint (T-API-1, T-API-2) — warn-only by default, blocking in --mode=b
+  const lintFindings = lintSpec(parsed);
+  if (lintFindings.length > 0) {
+    printLintFindings(lintFindings);
+    if (opts.mode === "b") {
+      const accepted = parseAcceptRisks(opts.acceptRisks);
+      const blocking = lintFindings.filter(f =>
+        (f.severity === "high" || f.severity === "critical") &&
+        !accepted.has(`${f.id}:${f.endpointSlug}`)
+      );
+      if (blocking.length > 0) {
+        console.error(`\n[spec-lint] ${blocking.length} blocking finding(s) in --mode=b. Pass --accept-risks=<id>:<endpoint-slug>,... to override.`);
+        process.exit(1);
+      }
+    }
+  }
 
   const apiName = opts.name ||
     parsed.info.title?.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().replace(/-+/g, "-") ||
@@ -273,6 +307,13 @@ async function cmdGenerate(source, opts) {
   const outputDir = resolve(opts.output || `.ay/apis/${apiName}`);
   mkdirSync(outputDir, { recursive: true });
 
+  // Copy runtime security helpers into the output dir — the generated
+  // server is standalone and imports these by relative path.
+  for (const helper of ["truncate.js", "desc-sanitize.js", "url-guard.js"]) {
+    const src = resolve(__dirname, "../src", helper);
+    writeFileSync(resolve(outputDir, helper), readFileSync(src, "utf-8"), "utf-8");
+  }
+
   // Generate MCP server
   const mcpSource = generateMCPServer(parsed, { name: apiName });
   const mcpPath = resolve(outputDir, "mcp-server.js");
@@ -288,7 +329,9 @@ async function cmdGenerate(source, opts) {
   console.log(`CLI tool:   ${cliPath}`);
 
   // Generate .env.example
-  const envContent = generateEnvExample(parsed.securitySchemes, parsed.baseUrl, parsed.info);
+  const envContent = generateEnvExample(parsed.securitySchemes, parsed.baseUrl, parsed.info, {
+    allowHostOverride: opts.allowHostOverride,
+  });
   const envPath = resolve(outputDir, ".env.example");
   writeFileSync(envPath, envContent, "utf-8");
   console.log(`Env file:   ${envPath}`);
@@ -302,7 +345,7 @@ async function cmdGenerate(source, opts) {
       type: "module",
       private: true,
       dependencies: {
-        "@modelcontextprotocol/sdk": "^1.12.1",
+        "@modelcontextprotocol/sdk": "1.29.0",
       },
     }, null, 2) + "\n", "utf-8");
   }
@@ -331,9 +374,16 @@ async function cmdGenerate(source, opts) {
 
   // Auto-register in settings.json
   if (!opts.noSettings) {
-    const settingsPath = injectSettings(mcpPath, apiName);
-    console.log(`Settings:   ${settingsPath}`);
-    console.log(`  -> MCP server "${apiName}" registered.`);
+    try {
+      const { settingsPath, key } = injectSettings(mcpPath, apiName, {
+        force: opts.force,
+        nonInteractive: !process.stdout.isTTY,
+      });
+      console.log(`Settings:   ${settingsPath}`);
+      console.log(`  -> MCP server "${key}" registered.`);
+    } catch (err) {
+      console.error(`Settings:   ${err.message}`);
+    }
   }
 
   // Print summary

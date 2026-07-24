@@ -11,6 +11,7 @@
 | 2026-05-21 | luisa | security | Authored THREAT-MODEL.md + ADR-006 RFC; opened PR #1 to liwala/ay-api-gen | 3 files, +916 lines | (external) |
 | 2026-05-22 | walid (via claude) | review | Branch `rfc-responses-walid` with answers to OQ-1..OQ-6 and threat-model OQs; posted PR comment | 1 file, +332 lines | ~30m |
 | 2026-05-24 | claude | framework | Reinstall AY framework on branch `ay-framework`; deep-fill .ay workspace | many | ~1h (this session) |
+| 2026-07-25 | claude | S1-01..S1-07 | Implemented full S1 security-baseline sprint: JSDoc/template injection fix, truncate.js wiring, settings namespace, description sanitization, base-URL guard, private-IP deny-list, spec-linter. Found + fixed 3 bugs along the way (second CLI injection vector, truncate.js crash bug, IPv6 SSRF-check bypass). Pinned sdk dep. 38 new offline tests. | 14 src files, 1 test file, README, package.json, .npmrc | ~3h |
 
 ## Conventions
 

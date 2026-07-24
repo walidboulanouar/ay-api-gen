@@ -144,6 +144,40 @@ ay-api-gen regen [name|--all]               # Regenerate from saved config
 --help, -h           Show help
 ```
 
+## Security
+
+A spec you didn't write is untrusted input — its title, descriptions, and declared
+base URL all end up in generated code or in Claude's context. `ay-api-gen` ships
+several default-on mitigations (see `docs/security/THREAT-MODEL.md` for the full
+picture):
+
+- **Same-host base URL guard.** `API_BASE_URL` may only change the path of the
+  spec's declared base URL, not the host/scheme — this stops a `settings.json`
+  edit from silently rebinding your auth-attached requests to an attacker host.
+  Opt into a genuine cross-host swap with `API_BASE_URL_ALLOW_HOST_OVERRIDE=1`
+  (env) or `--allow-host-override` (generation time); both log loudly.
+- **Private-IP / metadata deny-list.** Requests to loopback, link-local, RFC1918,
+  and cloud-metadata ranges (e.g. `169.254.169.254`) are refused by default,
+  both for the spec's declared base URL and at request time (catches DNS
+  rebinding). Opt out with `AY_ALLOW_PRIVATE_HOSTS=1` for legitimate intranet APIs.
+- **Truncated, boundary-marked responses.** API responses are capped (default
+  8000 chars / 5 array items — tune with `AY_TRUNCATE_MAX_CHARS` /
+  `AY_TRUNCATE_MAX_ITEMS`) and wrapped in `--- begin/end API response
+  (untrusted) ---` markers before reaching Claude's context.
+- **Untrusted, capped tool descriptions.** Tool and parameter descriptions are
+  capped at 500 chars, forced single-line, and prefixed `[tool description,
+  untrusted]` so the model has an anchor to discount injected instructions.
+- **Namespaced settings entries.** Generated MCP servers register under
+  `ay-api-gen:<name>` in `settings.json`, never overwriting an existing
+  unprefixed entry from another tool without `--force`.
+- **Spec linter (`--mode=b`).** Warns by default on unauthenticated mutating
+  endpoints and sensitive identifiers in path params; pass `--mode=b` to block
+  generation on HIGH/CRITICAL findings, with `--accept-risks=<id>:<slug>,...`
+  to explicitly override.
+
+None of this defends against a fully malicious, deliberately-targeted spec with
+unlimited creativity — see the threat model for what's still open.
+
 ## Supported specs
 
 - Swagger 2.0 (JSON)

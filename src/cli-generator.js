@@ -8,6 +8,36 @@
 import { generateAuthCode, generateEnvDocs } from "./auth-codegen.js";
 
 /**
+ * Escape a spec-derived string for safe interpolation into a JSDoc block comment.
+ * Prevents a malicious `*\/` sequence in info.title/description from terminating
+ * the comment early and injecting arbitrary JS into the generated CLI.
+ */
+function safeCommentLine(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/\*\//g, "*\\/")
+    .replace(/\r?\n/g, " ")
+    .slice(0, 500);
+}
+
+/**
+ * Escape a spec-derived string for safe interpolation into a *generated*
+ * template literal (i.e. text embedded at codegen time inside a `...`
+ * block in the output source). Without this, a title containing a
+ * backtick or `${...}` breaks out of the generated string and injects
+ * arbitrary JS that runs when the generated CLI executes.
+ */
+function safeTemplateText(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\$\{/g, "\\${")
+    .replace(/\r?\n/g, " ")
+    .slice(0, 500);
+}
+
+/**
  * Generate the CLI source code as a string.
  * @param {object} parsed - Output from extractEndpoints()
  * @param {object} options - { name }
@@ -28,8 +58,8 @@ export function generateCLI(parsed, options = {}) {
 
   const src = `#!/usr/bin/env node
 /**
- * CLI: ${info.title || apiName}
- * ${info.description || "Auto-generated from OpenAPI spec"}
+ * CLI: ${safeCommentLine(info.title) || apiName}
+ * ${safeCommentLine(info.description) || "Auto-generated from OpenAPI spec"}
  *
  * Usage:
  *   ${binName} <resource> <action> [--param value ...]
@@ -166,7 +196,7 @@ ${Object.entries(groups).map(([resource, eps]) => {
 // ── Help ──
 function printHelp() {
   console.log(\`
-${binName} - CLI for ${info.title || apiName}
+${binName} - CLI for ${safeTemplateText(info.title) || apiName}
 
 Usage:
   ${binName} <resource> <action> [--param value ...]

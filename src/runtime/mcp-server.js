@@ -28,6 +28,9 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSpec, extractEndpoints } from "../parser.js";
+import { safeDescription } from "../desc-sanitize.js";
+import { asMcpContent } from "../truncate.js";
+import { resolveBaseUrl, assertHostAllowed } from "../url-guard.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -130,6 +133,7 @@ async function callApi(baseUrl, method, path, params, bodyParams, securityScheme
   }
 
   try {
+    await assertHostAllowed(url);
     const res = await fetch(url, opts);
     const text = await res.text();
     let data;
@@ -155,7 +159,7 @@ function zodForParam(param) {
       default: schema = z.string(); break;
     }
   }
-  if (param.description) schema = schema.describe(param.description);
+  if (param.description) schema = schema.describe(safeDescription(param.description, "param"));
   if (!param.required) schema = schema.optional();
   return schema;
 }
@@ -171,11 +175,13 @@ const spec = await loadSpec(specSource);
 const parsed = extractEndpoints(spec);
 const { baseUrl, info, endpoints, securitySchemes } = parsed;
 
+await assertHostAllowed(baseUrl);
+
 const apiName = process.env.MCP_SERVER_NAME ||
   info.title?.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().replace(/-+/g, "-") ||
   "api";
 
-const overrideBaseUrl = process.env.API_BASE_URL || baseUrl;
+const overrideBaseUrl = resolveBaseUrl(baseUrl, process.env.API_BASE_URL);
 
 const server = new McpServer({
   name: apiName,
@@ -204,7 +210,7 @@ for (const ep of endpoints) {
           default: s = z.string(); break;
         }
       }
-      if (val.description) s = s.describe(val.description);
+      if (val.description) s = s.describe(safeDescription(val.description, "param"));
       if (!isRequired) s = s.optional();
       schemaObj[key] = s;
     }
@@ -216,7 +222,7 @@ for (const ep of endpoints) {
 
   server.tool(
     ep.toolName,
-    ep.summary || `${ep.method} ${ep.path}`,
+    safeDescription(ep.summary, "tool") || `${ep.method} ${ep.path}`,
     schemaObj,
     async (params) => {
       const pathQueryParams = {};
@@ -233,7 +239,10 @@ for (const ep of endpoints) {
       }
 
       const result = await callApi(overrideBaseUrl, ep.method, ep.path, pathQueryParams, bodyParams, securitySchemes);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return asMcpContent(result, {
+        maxChars: Number(process.env.AY_TRUNCATE_MAX_CHARS) || undefined,
+        maxItems: Number(process.env.AY_TRUNCATE_MAX_ITEMS) || undefined,
+      });
     }
   );
 }

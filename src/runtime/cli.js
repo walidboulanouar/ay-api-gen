@@ -13,6 +13,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadSpec, extractEndpoints, deriveCLICommand } from "../parser.js";
+import { resolveBaseUrl, assertHostAllowed } from "../url-guard.js";
 
 // ── .env loader ──
 function loadEnv() {
@@ -79,6 +80,7 @@ async function callApi(baseUrl, method, path, params, body, securitySchemes) {
   const opts = { method, headers };
   if (body && Object.keys(body).length && method !== "GET" && method !== "HEAD") opts.body = JSON.stringify(body);
 
+  await assertHostAllowed(full);
   const res = await fetch(full, opts);
   const text = await res.text();
   let data;
@@ -123,7 +125,8 @@ Examples:
 
 const spec = await loadSpec(specSource);
 const parsed = extractEndpoints(spec);
-const baseUrl = process.env.API_BASE_URL || parsed.baseUrl;
+await assertHostAllowed(parsed.baseUrl);
+const baseUrl = resolveBaseUrl(parsed.baseUrl, process.env.API_BASE_URL);
 
 const resource = positional[1];
 const action = positional[2];

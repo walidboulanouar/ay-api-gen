@@ -52,6 +52,7 @@ Companion: docs/security/THREAT-MODEL.md, docs/security/ADR-006-security-pipelin
 Responses: docs/security/RFC-RESPONSES-walid.md
 Acceptance gated on: S1-01..04 landing + answers to OQ-1..6 (now provided)
 Date: 2026-05-21
+Update (2026-07-25): S1-01..S1-07 all landed on `ay-framework` (see HANDOFFS.md, AGENTS-LOG.md). Every fix S1-08 names as a precondition is now in place. Status remains "Proposed (RFC)" pending Luisa's review pass — not self-flipping to Accepted since that's her sign-off per BOARD.md S1-08.
 
 ---
 
