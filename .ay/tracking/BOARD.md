@@ -103,6 +103,18 @@ Full writeup: [`../../GAP-ANALYSIS.md`](../../GAP-ANALYSIS.md). Public web resea
 
 **Not built, deferred with reasoning** (real gaps, not underspecified, but bigger than a same-night add-on): multi-tool workflow composition (Gram-style), broader RBAC/SSO/audit-trail governance UX (a hosted-service feature category, not a CLI feature).
 
+## Post-PR#1 sprint — remaining threat-model gaps (landed 2026-07-25, new branch/PR per chunk)
+
+Full `THREAT-MODEL.md` (on `security-threat-model` branch) re-audited against current code after PR#1 shipped. Most threat IDs were already closed by S1–S3; three genuine, still-open, engineering-scoped gaps found and closed:
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| gap-3 | T-ING-3 (DoS via large/nested spec — no size cap) | DONE | `parser.js`'s `loadSpec()` had zero size limit; a 500MB spec (malicious URL or bad copy-paste) was read fully into memory before parsing could reject it. Fixed with a 25MB cap: `statSync` pre-check for local files (never opens the file), streaming byte-counter for fetched URLs (`readCapped()` — aborts mid-stream, can't be bypassed by a missing/lying `Content-Length`). Also applied to `discover.js`'s probe fetches, which had the same unbounded-`res.text()` pattern across up to 19 probe paths per domain. |
+| gap-4 | T-API-6 (no declared rate limiting) | DONE | New spec-linter check, same pattern as T-API-1..5: one spec-wide LOW finding if no endpoint anywhere declares a 429 response or a `RateLimit-*`/`X-RateLimit-*` header. `parser.js` now derives `hasRateLimitSignal` per endpoint to support it. Legitimately changed 2 existing fixture-based test assertions (finding counts went up by exactly 1 on specs that were missing this signal all along) — same "update the test, don't weaken the assertion" discipline as every other case like this in this project's history. |
+| gap-5 | T-GEN-3 / T-SUP-2 (floating version ranges in generated `package.json`) | VERIFIED, no fix needed | Audited `bin/ay-api-gen.js`'s generated-output `package.json` template — `@modelcontextprotocol/sdk` is already exact-pinned (`"1.29.0"`, no `^`/`~`), no other dependency is emitted. Confirmed rather than assumed. |
+
+Verification: `node test/run.js` (160/160) + `node test/integration-cli.js` (120/120) + `python3 ~/.claude/skills/pin-guard/scripts/scan.py .` (clean, same 2 pre-existing findings).
+
 ## Backlog — commercial / scale
 
 **Surveyed 2026-07-25** for anything buildable without a human product/business

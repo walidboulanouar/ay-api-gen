@@ -5,7 +5,7 @@
  * Uses the Petstore Swagger 2.0 spec as proof.
  */
 
-import { loadSpec, extractEndpoints, deriveToolName } from "../src/parser.js";
+import { loadSpec, extractEndpoints, deriveToolName, readCapped, MAX_SPEC_BYTES } from "../src/parser.js";
 import { generateMCPServer } from "../src/mcp-generator.js";
 import { generateCLI } from "../src/cli-generator.js";
 import { generateOpenAPIFromTools } from "../src/reverse.js";
@@ -324,14 +324,58 @@ async function testSecurityHardening() {
   const cleanSpec = {
     baseUrl: "https://8.8.8.8",
     info: {}, securitySchemes: { bearer: { type: "http", scheme: "bearer" } }, endpoints: [
-      { method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [] },
+      { method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [], hasRateLimitSignal: true },
       {
-        method: "PUT", path: "/user", security: [{ bearer: [] }], parameters: [],
+        method: "PUT", path: "/user", security: [{ bearer: [] }], parameters: [], hasRateLimitSignal: true,
         requestBody: { schema: { properties: { role: { type: "string", readOnly: true } } } },
       },
     ],
   };
-  assert(lintSpec(cleanSpec).length === 0, "spec-linter: clean spec (incl. a readOnly role field) produces no findings");
+  assert(lintSpec(cleanSpec).length === 0, "spec-linter: clean spec (incl. a readOnly role field, and a declared rate limit) produces no findings");
+
+  // T-API-6: no endpoint anywhere declares a 429 response or a RateLimit-*
+  // header — a single spec-wide low-severity finding, not one per endpoint.
+  const noRateLimitSpec = {
+    baseUrl: "https://8.8.8.8",
+    info: {}, securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    endpoints: [
+      { method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [] },
+      { method: "GET", path: "/orders", security: [{ bearer: [] }], parameters: [] },
+    ],
+  };
+  const noRateLimitFindings = lintSpec(noRateLimitSpec);
+  const rateLimitHits = noRateLimitFindings.filter(f => f.id === "T-API-6");
+  assert(rateLimitHits.length === 1 && rateLimitHits[0].severity === "low" && rateLimitHits[0].endpoint === "(spec-wide)", "T-API-6: fires exactly once (spec-wide, low) when NO endpoint declares a 429 response or RateLimit header");
+
+  const oneEndpointRateLimitedSpec = {
+    ...noRateLimitSpec,
+    endpoints: [
+      { method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [], hasRateLimitSignal: true },
+      { method: "GET", path: "/orders", security: [{ bearer: [] }], parameters: [] },
+    ],
+  };
+  assert(!lintSpec(oneEndpointRateLimitedSpec).some(f => f.id === "T-API-6"), "T-API-6: does not fire if ANY endpoint in the spec declares a rate-limit signal");
+
+  // parser.js: verify hasRateLimitSignal is actually derived correctly from
+  // a real spec (429 response code, or a RateLimit-*/X-RateLimit-* header
+  // on any declared response), not just trusted as a hand-set test flag.
+  const rateLimitParseSpec = {
+    openapi: "3.0.0",
+    info: { title: "Rate Limit Parse Test", version: "1.0.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: {
+      "/via-429": { get: { operationId: "via429", responses: { "200": { description: "ok" }, "429": { description: "rate limited" } } } },
+      "/via-header": { get: { operationId: "viaHeader", responses: { "200": { description: "ok", headers: { "X-RateLimit-Remaining": { schema: { type: "integer" } } } } } } },
+      "/via-neither": { get: { operationId: "viaNeither", responses: { "200": { description: "ok" } } } },
+    },
+  };
+  const rateLimitParsed = extractEndpoints(rateLimitParseSpec);
+  const via429 = rateLimitParsed.endpoints.find(e => e.path === "/via-429");
+  const viaHeader = rateLimitParsed.endpoints.find(e => e.path === "/via-header");
+  const viaNeither = rateLimitParsed.endpoints.find(e => e.path === "/via-neither");
+  assert(via429.hasRateLimitSignal === true, "parser: hasRateLimitSignal true when a 429 response is declared");
+  assert(viaHeader.hasRateLimitSignal === true, "parser: hasRateLimitSignal true when a response declares an X-RateLimit-* header");
+  assert(viaNeither.hasRateLimitSignal === false, "parser: hasRateLimitSignal false when neither a 429 nor a RateLimit header is declared");
 
   // T-API-5: basic auth as the only scheme, over plaintext http:// — the
   // one case severe enough to be "high" (credentials are base64-encoded,
@@ -913,6 +957,58 @@ async function testOpenAPI31Support() {
   assert(bothResult.warnings.some(w => w.includes("webhook")), "3.1 spec with both paths and webhooks: gets an informational warning about the webhooks not being generated");
 }
 
+/**
+ * T-ING-3: DoS via a large or maliciously nested spec. Previously
+ * `loadSpec()` had no size cap at all — a 500MB spec (malicious URL, or
+ * just a bad copy-paste) would be read fully into memory before parsing
+ * ever got a chance to reject it. Fixed with a 25MB cap enforced two ways:
+ * a `statSync` pre-check for local files (never opens the file), and a
+ * streaming byte-counter for fetched URLs (aborts mid-stream rather than
+ * buffering the whole response first — a lying/absent Content-Length
+ * header can't bypass it). All offline — no real network calls.
+ */
+async function testSpecSizeCap() {
+  console.log("\n--- T-ING-3: Spec Size Cap (DoS Guard) ---");
+
+  // Local file over the cap: rejected via a cheap statSync, before ever
+  // reading the file into memory.
+  const bigDir = mkdtempSync(resolvePath(tmpdir(), "ay-spec-size-test-"));
+  const bigFile = resolvePath(bigDir, "huge-spec.json");
+  fsWriteFileSync(bigFile, Buffer.alloc(MAX_SPEC_BYTES + 1024, "a"));
+  let bigFileRejected = false;
+  try {
+    await loadSpec(bigFile);
+  } catch (e) {
+    bigFileRejected = /size cap/.test(e.message);
+  }
+  assert(bigFileRejected, "T-ING-3: loadSpec() rejects a local spec file over the 25MB cap without reading its contents");
+
+  // Local file comfortably under the cap: unaffected, still loads normally.
+  const smallFile = resolvePath(bigDir, "small-spec.json");
+  fsWriteFileSync(smallFile, JSON.stringify({ openapi: "3.0.0", info: { title: "t", version: "1" }, paths: {} }));
+  const smallSpec = await loadSpec(smallFile);
+  assert(smallSpec.openapi === "3.0.0", "T-ING-3: loadSpec() loads a normal, well-under-cap local spec file unaffected");
+
+  // readCapped() directly, against a real Response with a streamable body
+  // (Node's built-in Response — no network involved), proving the cap is
+  // enforced against actual bytes read, not just a header a server could
+  // lie about or omit.
+  const smallBody = "x".repeat(50);
+  const smallRes = new Response(smallBody);
+  const smallRead = await readCapped(smallRes, 100);
+  assert(smallRead === smallBody, "T-ING-3: readCapped() returns the full body when it's under the cap");
+
+  const oversizedBody = "y".repeat(500);
+  const oversizedRes = new Response(oversizedBody);
+  let streamRejected = false;
+  try {
+    await readCapped(oversizedRes, 100);
+  } catch (e) {
+    streamRejected = /size cap/.test(e.message);
+  }
+  assert(streamRejected, "T-ING-3: readCapped() aborts mid-stream once more than maxBytes have arrived, even with no/lying Content-Length");
+}
+
 // ── Run all tests ──
 async function run() {
   console.log("ay-api-gen — End-to-End Tests\n");
@@ -969,6 +1065,14 @@ async function run() {
     await testOpenAPI31Support();
   } catch (err) {
     console.error(`\nFATAL (OpenAPI 3.1 support): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testSpecSizeCap();
+  } catch (err) {
+    console.error(`\nFATAL (T-ING-3 spec size cap): ${err.message}`);
     console.error(err.stack);
     failed++;
   }

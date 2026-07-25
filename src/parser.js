@@ -4,9 +4,58 @@
  * Fetches from URL or reads from local file. Zero external deps.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseYaml } from "./yaml-parser.js";
+
+// T-ING-3: no size cap previously existed on a fetched or on-disk spec —
+// a 500MB spec (malicious or just a mistaken URL) would be read fully into
+// memory before parsing ever gets a chance to reject it. 25MB is generous
+// for any real-world OpenAPI/Swagger document (even large ones — Stripe's
+// public spec is ~10MB) while still bounding worst-case memory use to a
+// fixed, small multiple of that, not a multiple of whatever an attacker
+// chooses to serve.
+export const MAX_SPEC_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Read a fetch Response body as text, aborting once more than `maxBytes`
+ * have arrived rather than buffering the whole thing first. Content-Length
+ * isn't trustworthy on its own (can be absent, or a server can lie/chunk
+ * past it), so this enforces the cap against the actual bytes read.
+ * @param {Response} res
+ * @param {number} maxBytes
+ * @returns {Promise<string>}
+ */
+export async function readCapped(res, maxBytes) {
+  if (!res.body || typeof res.body.getReader !== "function") {
+    // Environments without a streamable body (rare) — fall back to a
+    // single read, still bounded by a post-hoc size check below.
+    const text = await res.text();
+    if (Buffer.byteLength(text, "utf-8") > maxBytes) {
+      throw new Error(`Spec response exceeds the ${maxBytes}-byte size cap (T-ING-3 DoS guard).`);
+    }
+    return text;
+  }
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error(`Spec response exceeds the ${maxBytes}-byte size cap (T-ING-3 DoS guard).`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf-8");
+}
 
 /**
  * Fetch spec from URL or read from local file path.
@@ -21,9 +70,14 @@ export async function loadSpec(source) {
     sourceUrl = source;
     const res = await fetch(source);
     if (!res.ok) throw new Error(`Failed to fetch spec: ${res.status} ${res.statusText}`);
-    raw = await res.text();
+    raw = await readCapped(res, MAX_SPEC_BYTES);
   } else {
-    raw = readFileSync(resolve(source), "utf-8");
+    const filePath = resolve(source);
+    const { size } = statSync(filePath);
+    if (size > MAX_SPEC_BYTES) {
+      throw new Error(`Spec file "${filePath}" (${size} bytes) exceeds the ${MAX_SPEC_BYTES}-byte size cap (T-ING-3 DoS guard).`);
+    }
+    raw = readFileSync(filePath, "utf-8");
   }
 
   let spec;
@@ -344,6 +398,15 @@ export function extractEndpoints(spec) {
       // Security requirements
       const security = operation.security || spec.security || [];
 
+      // Rate-limit signal (T-API-6): a declared 429 response, or a
+      // response header matching the de-facto RateLimit-*/X-RateLimit-*
+      // convention (RFC-in-draft draft-ietf-httpapi-ratelimit-headers and
+      // the older de-facto GitHub/Twitter convention both use this name
+      // shape), on ANY declared response — not just the success one.
+      const hasRateLimitSignal = Boolean(responses["429"]) || Object.values(responses).some(
+        (r) => Object.keys(r?.headers || {}).some((h) => /rate.?limit/i.test(h))
+      );
+
       endpoints.push({
         path,
         method: method.toUpperCase(),
@@ -357,6 +420,7 @@ export function extractEndpoints(spec) {
         security,
         tags: operation.tags || [],
         operationId: operation.operationId || null,
+        hasRateLimitSignal,
       });
     }
   }
