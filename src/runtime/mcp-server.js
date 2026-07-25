@@ -31,6 +31,8 @@ import { loadSpec, extractEndpoints } from "../parser.js";
 import { safeDescription } from "../desc-sanitize.js";
 import { asMcpContent } from "../truncate.js";
 import { resolveBaseUrl, assertHostAllowed } from "../url-guard.js";
+import { isCacheable, cacheKey, getCached, setCached } from "../response-cache.js";
+import { throttle, rpsToMinIntervalMs } from "../rate-limiter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -122,10 +124,20 @@ function buildUrl(baseUrl, pathTemplate, params, authQuery) {
   return queryParts.length > 0 ? `${fullUrl}?${queryParts.join("&")}` : fullUrl;
 }
 
+const CACHE_TTL_MS = Number(process.env.AY_CACHE_TTL_MS) || 0;
+const RATE_LIMIT_MIN_INTERVAL_MS = rpsToMinIntervalMs(process.env.AY_RATE_LIMIT_RPS);
+
 async function callApi(baseUrl, method, path, params, bodyParams, securitySchemes) {
   const authQuery = getAuthQueryParams(securitySchemes);
   const url = buildUrl(baseUrl, path, params, authQuery);
   const headers = getAuthHeaders(securitySchemes);
+
+  const cacheable = CACHE_TTL_MS > 0 && isCacheable(method);
+  const key = cacheable ? cacheKey(method, url) : null;
+  if (cacheable) {
+    const cached = getCached(key);
+    if (cached !== undefined) return cached;
+  }
 
   const opts = { method, headers };
   if (bodyParams && Object.keys(bodyParams).length > 0 && method !== "GET" && method !== "HEAD") {
@@ -134,12 +146,14 @@ async function callApi(baseUrl, method, path, params, bodyParams, securityScheme
 
   try {
     await assertHostAllowed(url);
+    await throttle(new URL(url).host, RATE_LIMIT_MIN_INTERVAL_MS);
     const res = await fetch(url, opts);
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch { data = text; }
-    if (!res.ok) return { error: true, status: res.status, statusText: res.statusText, body: data };
-    return data;
+    const result = res.ok ? data : { error: true, status: res.status, statusText: res.statusText, body: data };
+    if (cacheable && res.ok) setCached(key, result, CACHE_TTL_MS);
+    return result;
   } catch (err) {
     return { error: true, message: err.message };
   }

@@ -4,6 +4,41 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: T-GEN-4, backlog survey, items 23/24 — final wrap-up of the S1→S3 security-hardening thread
+
+**STOPPING POINT — read this before starting new work.** This closes out a full day of S1→S3 security-baseline work (see the three session entries below for the complete history). Everything left in `.ay/tracking/BOARD.md` that is concretely engineering-scoped and not blocked on a human decision has now been built. What remains is genuinely one of: (a) Walid/Luisa's own action items, (b) real infrastructure/credentials this session wasn't permitted to provision, or (c) product/security decisions that aren't mine to make unilaterally. Details below.
+
+### What I did this session
+
+1. **T-GEN-4 (output path traversal via `--output`)** — a two-tier `checkOutputPathSafety()` in `bin/ay-api-gen.js`. System directories (`/etc`, `/usr`, `/bin`, `/sbin`, `/boot`, `/root`, `/System`, `/Library`, `/Applications`, `/Windows`) are refused outright, no override — there's no legitimate reason this tool's output ever belongs there. The bare home directory and filesystem root (`/`) are refused too, but only on an exact match, not as a path prefix — most real projects live several levels under `$HOME`, so a prefix block would have rejected virtually all normal `--output` usage. Anything else outside the current working directory (a sibling project, an arbitrary absolute path) is allowed with a visible, non-blocking warning, since that's genuinely normal use of the flag.
+   - Caught two real bugs before they shipped, both worth remembering: (a) my first version of the deny-list included `/var`, which looks like a system directory but is actually where macOS's own `os.tmpdir()` lives (`/var/folders/...`) — this would have broken completely ordinary `--output /tmp/...` usage, including this project's own test suite. Caught it because my *own new tests* started failing against paths that had nothing to do with the traversal case I was testing — a good reminder to pay attention when a test fails for a reason you didn't expect. (b) While tracing the code I found the `init` wizard's `.env` pre-write used raw, unsanitized `config.name` to compute its own output directory — separately from `cmdGenerate`'s own (already-sanitized) computation. Beyond the traversal risk this shares with `--name`, it meant the `.env` file and the generated server could land in *different* directories if the raw and sanitized names diverged. Fixed both by routing through the same `sanitizeApiName()`.
+   - A macOS-specific test-infra gotcha also surfaced here: `/var` → `/private/var` is a symlink, and a spawned child process's `process.cwd()` reports the resolved realpath while `mkdtempSync()` in the parent test process returns the symlink form. Any test that constructs a path in the parent and checks whether the *child* considers it "inside its cwd" needs to `realpathSync()` the base temp directory first, or the comparison silently mismatches. Fixed in `test/integration-cli.js`'s `mkTmpProject()`.
+2. **Backlog survey** — read every remaining item in `.ay/tracking/BOARD.md`: the S3 numbered backlog (19–24) and the full C-01..C-07 commercial/scale backlog. Full per-item reasoning is in BOARD.md's "Backlog — commercial / scale" section now. Short version: all 7 C-items are genuinely blocked (three depend on ADR-012, which is still "Proposed" — not Accepted — building the acceptance-log/spec-gating UX on top of an unreviewed design risks real rework; the rest need actual AWS/Stripe infrastructure and credentials this session isn't permitted to provision, or a licensing/tier model that plainly doesn't exist yet in any tracking doc). Items 19 (OpenAPI 3.1 full support) and 21 (multi-spec merge) are real future engineering work but larger in scope or self-admittedly underspecified (21's own board entry says "UX questions open"). Item 20 (SSE transport) needs a genuine security-relevant decision — bind address and auth model for a newly-exposed network listener — that isn't mine to make unilaterally for a security-conscious project.
+3. **Items 23 + 24** — the only two backlog items that were both small and fully engineering-scoped with no product decision needed. New `src/response-cache.js` (opt-in TTL cache for idempotent GET/HEAD, via `AY_CACHE_TTL_MS`, never caches mutating methods) and `src/rate-limiter.js` (opt-in per-host throttle via `AY_RATE_LIMIT_RPS` — delays rather than rejects, since an LLM-driven tool caller has no good way to "retry later" on a hard rejection). Both wired into `runtime/mcp-server.js` only; deliberately not wired into `runtime/cli.js`, which I traced first and confirmed is architecturally a one-shot process (exactly one HTTP call per invocation) — there's nothing for an in-memory cache or a per-process rate limiter to act on there.
+   - Verification went a level deeper than most of this session's prior work: rather than only unit-testing the two new primitive modules, I used `@modelcontextprotocol/sdk`'s own `Client` + `StdioClientTransport` to spawn the real `runtime/mcp-server.js` and speak actual MCP JSON-RPC to it against an ephemeral HTTP fixture — proving caching and rate-limiting end-to-end through the real protocol (upstream hit-count assertions, wall-clock gap assertions between real hits), not just that the underlying data structures behave correctly in isolation. Worth reusing this pattern for any future `runtime/mcp-server.js` feature — string-matching CLI stdout (the pattern used elsewhere this session) doesn't work for the MCP server since it doesn't produce human-readable stdout at all, it speaks JSON-RPC over stdio.
+
+### Verification
+
+```bash
+node test/run.js              # 129/129
+node test/integration-cli.js  # 105/105, fully network-free (ephemeral fixtures + real MCP client only)
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean — same two pre-existing findings as before
+```
+
+### What's genuinely left (not invented scope)
+
+- **S1-08** — Luisa's review pass to flip ADR-006 from "Proposed" to "Accepted". Not mine to do.
+- **Task 17 (npm publish)** — blocked on B-01 (`npm login` credentials) and B-02 (product name decision, both Walid+Luisa's call, target date in ADR-009 already passed — worth a nudge).
+- **C-01 through C-07** — all blocked, see BOARD.md for the specific reason each one is blocked.
+- **Items 19, 20, 21** — real future engineering work, deferred for the reasons above. If another engineering-focused sprint is requested, item 19 (OpenAPI 3.1 full support) is the most self-contained next candidate — it's real spec-compliance work, not a product decision, just larger than a same-session add-on.
+- **B-09's TOCTOU note** was already fully resolved in the prior S3 session (file locking) — nothing further needed there.
+
+### If you're picking this up next
+
+Read the three session entries below in order (S1, S2, S3) for the full technical history — each one has a "What's left" section that stayed accurate until superseded by the next session. This entry is the final word: the security-hardening thread that started with S1 is complete relative to what's concretely buildable right now. Anything past this point needs either a human decision from Walid/Luisa or real infrastructure this environment doesn't have.
+
+---
+
 ## 2026-07-25 — Session: S3 sprint — file locking, T-GEN-2/T-API-3, yaml dependency (autonomous, continuation of same-day S1+S2 session)
 
 **Status at end of session: all 3 named items (B-09, T-GEN-2, S2-05) complete, plus T-API-3 discovered and fixed along the way. No wall hit.**

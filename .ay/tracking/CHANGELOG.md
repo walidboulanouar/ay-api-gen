@@ -30,6 +30,9 @@
 - Added T-API-3 (mass-assignment heuristic) to `src/spec-linter.js` — flags privilege/value-sensitive request-body fields (`role`, `is_admin`, `balance`, etc.) on mutating endpoints unless `readOnly: true`.
 - Replaced the hand-rolled `src/yaml-parser.js` with a thin wrapper around `yaml@2.9.0` (exact-pinned, zero transitive deps) — see ADR-013. Anchors/aliases and block scalars (`|`/`>`) now actually work.
 - New test coverage: 8 deterministic `file-lock.js` unit tests + a 6-process real-CLI concurrency stress test (B-09); 13 regression tests for the `--name` path-traversal / package.json-injection fix (T-GEN-2); T-API-3 unit tests; full YAML corpus re-run against the new parser plus new anchor/alias and block-scalar positive tests.
+- Fixed T-GEN-4: `--output` had no path-safety guard. Two-tier deny-list in `bin/ay-api-gen.js` — system directories refused outright (no override), bare home/filesystem root refused on exact match only (so real nested project paths aren't affected), anything else outside cwd allowed with a warning. Also fixed a related bug: the `init` wizard's `.env` pre-write used unsanitized `config.name`, risking a mismatch between where `.env` and the generated server landed.
+- Added response caching (`AY_CACHE_TTL_MS`, new `src/response-cache.js`) and rate limiting (`AY_RATE_LIMIT_RPS`, new `src/rate-limiter.js`) to `runtime/mcp-server.js`, both opt-in. Verified via a real MCP client/server protocol roundtrip, not just unit tests.
+- Surveyed the full remaining backlog (BOARD.md items 19–24, C-01..C-07) for anything buildable without a human decision — see BOARD.md for the per-item disposition.
 
 ## [0.1.1] — 2026-05-11
 

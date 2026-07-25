@@ -83,25 +83,36 @@ Source files exist; need integration tests + docs (treated as tech debt — see 
 | T-GEN-2 | `package.json` field injection in generated output | DONE | Traced fully: package.json is built via `JSON.stringify()` of a real object (not string concat), so JSON-structure injection was never actually exploitable — but `--name` bypassed the title's sanitization regex, risking path traversal in the default output dir. Fixed with a single `sanitizeApiName()` applied uniformly to both sources. 13 regression tests. |
 | T-API-3 | Mass-assignment-prone request schema (flagged "future scope" in S1-07's task file) | DONE | New check in `src/spec-linter.js` — flags request-body fields matching privilege/value-sensitive names (`role`, `is_admin`, `balance`, `permissions`, etc.) on mutating endpoints unless explicitly `readOnly: true`. |
 | S2-05 | YAML dependency swap | DONE | See above row and ADR-013. Delegated to a subagent running in parallel with the B-09/T-GEN-2/T-API-3 work above — completed cleanly, zero merge conflicts (scoped to non-overlapping files). |
+| T-GEN-4 | Output path traversal via `--output` | DONE | Two-tier `checkOutputPathSafety()` in `bin/ay-api-gen.js`: system directories + the bare home/filesystem root are refused outright (no override — no legitimate use case); anything else outside the cwd is allowed with a visible warning, since deliberately writing elsewhere is normal `--output` usage. Also fixed a related bug found while wiring this: the `init` wizard's `.env` pre-write used raw, unsanitized `config.name`, which could both traverse AND land in a different directory than the generated server. Caught and fixed a self-inflicted bug during testing: an early version of the deny-list included `/var`, which is where macOS's own temp directory lives — would have blocked ordinary `--output /tmp/...` usage. 18 regression tests. |
+| 23, 24 | Response caching + rate limiting in runtime | DONE | Backlog items, picked up after confirming everything else in the backlog was blocked or underspecified (see below). Both opt-in (`AY_CACHE_TTL_MS`, `AY_RATE_LIMIT_RPS`), wired into `runtime/mcp-server.js` only — `runtime/cli.js` is a one-shot process (exactly one HTTP call per invocation), so neither feature has anything to act on there. Verified via a real MCP client/server protocol roundtrip (`@modelcontextprotocol/sdk`'s `Client` + `StdioClientTransport`), not just unit tests of the primitives. |
 
 Note: the user's initial S3 request named "T-GEN-2 (the mass-assignment heuristic)" — checked against the actual `THREAT-MODEL.md` (which lives on the `security-threat-model` branch, not `ay-framework`) and found T-GEN-2 is actually "package.json field injection"; the mass-assignment heuristic is T-API-3. Implemented both rather than guessing which one was meant, since neither conflicted and both were real, previously-unaddressed threats.
 
 ## Backlog — commercial / scale
 
+**Surveyed 2026-07-25** for anything buildable without a human product/business
+decision. Verdict: every C-item below is genuinely blocked — either on
+Walid/Luisa's own action items (npm publish credentials, product naming,
+ADR-006/ADR-012 sign-off), on real infrastructure this session was not
+permitted to provision (AWS Fargate, a live Stripe account), or on a
+licensing/tier model that hasn't been decided yet and that C-05/C-06 both
+explicitly depend on. None were touched. See PROGRESS-LOG.md for the
+per-item reasoning.
+
 | # | Title | Notes |
 |---|-------|-------|
-| C-01 | T1 sandbox (Fargate + Claude agent) — paid tier | ADR-006 §4 |
-| C-02 | T2 spec gating + override UX (CLI + config + prompt) | ADR-006 §5.1, see Walid OQ-5 |
-| C-03 | T2 MCP red-team harness + adversarial corpus | ADR-006 §5.2 — enterprise tier |
-| C-04 | License gating logic | Single CLI, tier from license |
-| C-05 | Pricing page + billing integration | Stripe — depends on tier definitions |
-| C-06 | Customer-owned-API mode (`--owned`) | T1/T2 opt-in with interactive confirmation |
-| C-07 | Acceptance log + `.ay-api-gen.yml` config schema | OQ-5 — required for T2 |
-| 19 | OpenAPI 3.1 full support (webhooks, pathItems) | Medium scope |
-| 20 | HTTP-SSE transport for remote MCP servers | Medium |
-| 21 | Multi-spec merge (combine N specs into 1 MCP server) | Large; UX questions open |
-| 23 | Response caching in runtime | Small |
-| 24 | Rate limiting in runtime | Small |
+| C-01 | T1 sandbox (Fargate + Claude agent) — paid tier | ADR-006 §4. Blocked: real AWS infra + credentials, paid-tier gating not yet built (C-04). |
+| C-02 | T2 spec gating + override UX (CLI + config + prompt) | ADR-006 §5.1, see Walid OQ-5. Blocked: builds on ADR-012, which is still "Proposed" (not Accepted) — building on an unreviewed design risks wasted rework. |
+| C-03 | T2 MCP red-team harness + adversarial corpus | ADR-006 §5.2 — enterprise tier. Blocked: same as C-01 (paid/enterprise tier, no licensing yet), and the T1/T2 sandbox it would run in doesn't exist. |
+| C-04 | License gating logic | Single CLI, tier from license. Blocked: genuinely underspecified — no license format, verification method, or server has been decided anywhere in the tracking docs. This is a product decision, not an engineering gap. |
+| C-05 | Pricing page + billing integration | Stripe — depends on tier definitions. Blocked: explicitly depends on undecided tier definitions, plus needs a real Stripe account (human-provided credentials — see HUMAN-SETUP-NEEDED.md). |
+| C-06 | Customer-owned-API mode (`--owned`) | T1/T2 opt-in with interactive confirmation. Blocked: depends on T1/T2 (C-01/C-03), which don't exist yet. |
+| C-07 | Acceptance log + `.ay-api-gen.yml` config schema | OQ-5 — required for T2. Blocked: same ADR-012-not-Accepted issue as C-02 — this literally IS ADR-012's implementation. |
+| 19 | OpenAPI 3.1 full support (webhooks, pathItems) | Medium scope — surveyed 2026-07-25, deferred: real spec-compliance work (not a product decision), larger than a same-session add-on. Next candidate if another engineering-focused sprint is requested. |
+| 20 | HTTP-SSE transport for remote MCP servers | Medium — surveyed 2026-07-25, deferred: exposing a network listener needs decisions (bind address, auth model for the SSE endpoint) that are security-relevant enough not to make unilaterally without a human call. |
+| 21 | Multi-spec merge (combine N specs into 1 MCP server) | Large; UX questions open — surveyed 2026-07-25, genuinely underspecified per the board's own note, not touched. |
+| 23 | Response caching in runtime | **DONE 2026-07-25.** `src/response-cache.js`, opt-in via `AY_CACHE_TTL_MS`, wired into `runtime/mcp-server.js`. Real MCP-protocol end-to-end test (actual Client/StdioClientTransport roundtrip) + unit tests. |
+| 24 | Rate limiting in runtime | **DONE 2026-07-25.** `src/rate-limiter.js`, opt-in via `AY_RATE_LIMIT_RPS`, per-host throttle (delays, doesn't reject), wired into `runtime/mcp-server.js`. Same real-protocol test rigor as item 23. |
 
 ## Naming / branding (decision required)
 

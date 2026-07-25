@@ -15,6 +15,11 @@ Credentials / decisions a human must provide. Deduplicated; append here as new o
 - **What it's for:** Task 17 (publish to npm) is deliberately held until this is decided — see ADR-009.
 - **Who decides:** Walid + Luisa, criteria listed in ADR-009. Target date in that ADR was 2026-06-01 (passed as of this writing — worth a nudge if still unresolved).
 
+## Future, not yet needed: Stripe account (C-05, pricing/billing)
+
+- **What it's for:** `.ay/tracking/BOARD.md` backlog item C-05 (pricing page + billing integration) explicitly depends on both a licensing/tier model (not yet decided — see C-04) and a real Stripe account for API keys.
+- **Status:** Surveyed 2026-07-25 as part of a full backlog review — genuinely blocked on the tier-model decision, not just the credential. Nothing to act on yet; noting here so it's not forgotten when C-04 is eventually decided.
+
 ---
 
 ## Not needed for the S1/S2/S3 sessions' work

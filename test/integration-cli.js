@@ -14,14 +14,17 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { registerAPI } from "../src/registry.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = resolve(__dirname, "../bin/ay-api-gen.js");
+const RUNTIME_MCP_SERVER_PATH = resolve(__dirname, "../src/runtime/mcp-server.js");
 const FIXTURES = resolve(__dirname, "fixtures");
 
 let passed = 0;
@@ -96,7 +99,14 @@ function preventAutoInstall(outputDir) {
 }
 
 function mkTmpProject() {
-  return mkdtempSync(resolve(tmpdir(), "ay-api-gen-it-"));
+  // realpathSync: on macOS, tmpdir() lives under /var, which is itself a
+  // symlink to /private/var. A spawned child's own process.cwd() reports
+  // the resolved realpath, not the symlink form mkdtempSync() returns —
+  // so any path this test builds by joining onto the symlink form (e.g.
+  // for an "is this outside cwd" check) would mismatch what the child
+  // actually compares against internally. Normalize once, here, so every
+  // path built from this directory agrees with the child's view of cwd.
+  return realpathSync(mkdtempSync(resolve(tmpdir(), "ay-api-gen-it-")));
 }
 
 // ── diff ──
@@ -420,10 +430,162 @@ async function testGen2PackageJsonSafety() {
   assert(!("scripts" in pkg2), "T-GEN-2: malicious info.title did not inject a scripts.preinstall entry");
 }
 
+// ── T-GEN-4: output path traversal via --output ──
+async function testGen4OutputPathSafety() {
+  console.log("\n--- Integration: T-GEN-4 --output path safety ---");
+  const tmp = mkTmpProject();
+  const spec = resolve(FIXTURES, "diff-a.json");
+
+  // System directories: refused outright, no files written, clean error
+  // (not a raw EACCES/permission-denied stack trace — the check fires
+  // before any filesystem write is attempted).
+  for (const dangerous of ["/etc/ay-api-gen-test", "/usr/local/ay-api-gen-test", "/"]) {
+    const { stdout, code } = await runCLI([spec, "--output", dangerous, "--no-settings"], { cwd: tmp });
+    assert(code === 1, `T-GEN-4: --output ${dangerous} is refused (exit 1)`);
+    assert(stdout.includes("Refusing to write"), `T-GEN-4: --output ${dangerous} gets the clean refusal message, not a raw fs error`);
+    assert(!existsSync(dangerous === "/" ? "/mcp-server.js" : resolve(dangerous, "mcp-server.js")), `T-GEN-4: --output ${dangerous} did not actually write any file`);
+  }
+
+  // The bare home directory root is refused (exact match only) — but a
+  // real project path several levels under $HOME must NOT be refused,
+  // since that's where virtually every real project lives.
+  const { code: homeRootCode, stdout: homeRootOut } = await runCLI([spec, "--output", homedir(), "--no-settings"], { cwd: tmp });
+  assert(homeRootCode === 1, "T-GEN-4: --output <home directory root> is refused (exit 1)");
+  assert(homeRootOut.includes("Refusing to write"), "T-GEN-4: home-directory-root refusal uses the clean error message");
+  assert(!existsSync(resolve(homedir(), "mcp-server.js")), "T-GEN-4: refusing the home root did not write mcp-server.js directly into it");
+
+  const underHome = resolve(tmp, "nested/project/output"); // tmp itself is under $TMPDIR, not $HOME on macOS/Linux by default, but the real assertion that matters is "a path several segments long is never treated as the bare root"
+  preventAutoInstall(underHome);
+  const { code: nestedCode } = await runCLI([spec, "--output", underHome, "--no-settings"], { cwd: tmp });
+  assert(nestedCode === 0, "T-GEN-4: a real, deeply-nested project output path is never mistaken for a dangerous root");
+
+  // Outside cwd but not dangerous: allowed, with a visible warning — this
+  // is the "normal supported use of --output", must not be blocked.
+  const siblingDir = resolve(tmp, "..", `ay-api-gen-sibling-${Date.now()}`);
+  preventAutoInstall(siblingDir);
+  const { stdout: warnOut, code: warnCode } = await runCLI([spec, "--output", siblingDir, "--no-settings"], { cwd: tmp });
+  assert(warnCode === 0, "T-GEN-4: --output outside the cwd (but not a dangerous root) succeeds");
+  assert(warnOut.includes("warn: output directory is outside the current working directory"), "T-GEN-4: --output outside the cwd prints a visible (non-blocking) warning");
+  assert(existsSync(resolve(siblingDir, "mcp-server.js")), "T-GEN-4: the sibling-directory output actually landed where requested");
+
+  // A relative --output that stays inside the cwd must not warn at all.
+  const { stdout: noWarnOut, code: noWarnCode } = await runCLI([spec, "--output", "./out-normal", "--no-settings"], { cwd: tmp });
+  assert(noWarnCode === 0, "T-GEN-4: a normal relative --output inside the cwd succeeds");
+  assert(!noWarnOut.includes("output directory is outside"), "T-GEN-4: a normal relative --output inside the cwd does not trigger the outside-cwd warning");
+}
+
+/** Spin up an ephemeral spec+API fixture server and connect a real MCP client to runtime/mcp-server.js against it. */
+async function connectMcpFixture(envOverrides = {}) {
+  let hitCount = 0;
+  const hitTimestamps = [];
+  const spec = {
+    openapi: "3.0.3",
+    info: { title: "Runtime Feature Test API", version: "1.0.0" },
+    servers: [{ url: "PLACEHOLDER" }],
+    paths: { "/thing": { get: { operationId: "getThing", summary: "Get thing", responses: { 200: { description: "ok" } } } } },
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(spec)); return; }
+    if (req.url === "/thing") {
+      hitCount++;
+      hitTimestamps.push(Date.now());
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ hit: hitCount }));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  spec.servers[0].url = `http://127.0.0.1:${port}`;
+
+  const transport = new StdioClientTransport({
+    command: "node",
+    args: [RUNTIME_MCP_SERVER_PATH, `http://127.0.0.1:${port}/openapi.json`],
+    // AY_ALLOW_PRIVATE_HOSTS: the fixture server is 127.0.0.1 by construction
+    // (an ephemeral local test double) — T-ING-2's SSRF guard correctly
+    // refuses that by default, so tests need this opt-out, real production
+    // use against a real API would not.
+    env: { ...process.env, AY_ALLOW_PRIVATE_HOSTS: "1", ...envOverrides },
+  });
+  const client = new Client({ name: "test-probe", version: "1.0.0" }, { capabilities: {} });
+  await client.connect(transport);
+
+  return {
+    client,
+    getHitCount: () => hitCount,
+    getHitTimestamps: () => hitTimestamps,
+    async close() {
+      await client.close();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
+// ── Item 23: response caching in runtime (opt-in via AY_CACHE_TTL_MS) ──
+async function testResponseCaching() {
+  console.log("\n--- Integration: item 23 response caching (real MCP protocol) ---");
+
+  // Disabled by default: two calls must reach the upstream twice.
+  const off = await connectMcpFixture();
+  try {
+    await off.client.callTool({ name: "get_thing", arguments: {} });
+    await off.client.callTool({ name: "get_thing", arguments: {} });
+    assert(off.getHitCount() === 2, `response-cache: disabled by default, two tool calls reach the upstream twice (got ${off.getHitCount()})`);
+  } finally {
+    await off.close();
+  }
+
+  // Enabled via AY_CACHE_TTL_MS: second call within the TTL is served from
+  // cache, upstream is hit only once.
+  const on = await connectMcpFixture({ AY_CACHE_TTL_MS: "5000" });
+  try {
+    const r1 = await on.client.callTool({ name: "get_thing", arguments: {} });
+    const r2 = await on.client.callTool({ name: "get_thing", arguments: {} });
+    assert(on.getHitCount() === 1, `response-cache: AY_CACHE_TTL_MS=5000, two calls within the TTL hit the upstream once (got ${on.getHitCount()})`);
+    assert(JSON.stringify(r1) === JSON.stringify(r2), "response-cache: the cached response is byte-identical to the original");
+  } finally {
+    await on.close();
+  }
+}
+
+// ── Item 24: rate limiting in runtime (opt-in via AY_RATE_LIMIT_RPS) ──
+async function testRateLimiting() {
+  console.log("\n--- Integration: item 24 rate limiting (real MCP protocol) ---");
+
+  // Disabled by default: three sequential calls complete quickly, no
+  // artificial delay injected.
+  const off = await connectMcpFixture();
+  try {
+    const start = Date.now();
+    for (let i = 0; i < 3; i++) await off.client.callTool({ name: "get_thing", arguments: {} });
+    const elapsed = Date.now() - start;
+    assert(elapsed < 1000, `rate-limiter: disabled by default, 3 sequential calls complete quickly with no injected delay (took ${elapsed}ms)`);
+  } finally {
+    await off.close();
+  }
+
+  // Enabled via AY_RATE_LIMIT_RPS=2 (min 500ms between requests to the same
+  // host): 3 sequential calls must take at least 2 * 500ms = 1000ms total.
+  const on = await connectMcpFixture({ AY_RATE_LIMIT_RPS: "2" });
+  try {
+    const start = Date.now();
+    for (let i = 0; i < 3; i++) await on.client.callTool({ name: "get_thing", arguments: {} });
+    const elapsed = Date.now() - start;
+    assert(elapsed >= 900, `rate-limiter: AY_RATE_LIMIT_RPS=2, 3 sequential calls to the same host take at least ~1000ms total (took ${elapsed}ms)`);
+    const timestamps = on.getHitTimestamps();
+    for (let i = 1; i < timestamps.length; i++) {
+      assert(timestamps[i] - timestamps[i - 1] >= 400, `rate-limiter: gap between upstream hit ${i - 1} and ${i} is at least ~500ms (got ${timestamps[i] - timestamps[i - 1]}ms)`);
+    }
+  } finally {
+    await on.close();
+  }
+}
+
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting];
   for (const t of tests) {
     try {
       await t();

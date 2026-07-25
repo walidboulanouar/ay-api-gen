@@ -17,6 +17,8 @@ import { injectSettings } from "../src/settings-injector.js";
 import { parseYaml } from "../src/yaml-parser.js";
 import { withFileLock } from "../src/file-lock.js";
 import { registerAPI } from "../src/registry.js";
+import { isCacheable, cacheKey, getCached, setCached, clearCache, cacheSize } from "../src/response-cache.js";
+import { throttle, rpsToMinIntervalMs, resetRateLimiter } from "../src/rate-limiter.js";
 import {
   mkdtempSync, mkdirSync, writeFileSync as fsWriteFileSync, readFileSync as fsReadFileSync,
   closeSync, openSync, utimesSync,
@@ -644,6 +646,85 @@ async function testFileLock() {
   assert(Object.keys(registryContent.apis).length === 8, `file-lock: registerAPI() called 8x concurrently in-process loses no entries (found ${Object.keys(registryContent.apis).length})`);
 }
 
+/**
+ * Item 23: response-cache.js unit tests. The end-to-end proof that this is
+ * correctly wired into runtime/mcp-server.js (real MCP client/server
+ * roundtrip, real ephemeral HTTP fixture, hit-count assertions) lives in
+ * test/integration-cli.js's testResponseCaching() — these are the
+ * fast, deterministic tests of the caching primitive itself.
+ */
+async function testResponseCache() {
+  console.log("\n--- Item 23: response-cache.js Unit Tests ---");
+  clearCache();
+
+  assert(isCacheable("GET") && isCacheable("get") && isCacheable("HEAD"), "response-cache: GET and HEAD are cacheable");
+  assert(!isCacheable("POST") && !isCacheable("PUT") && !isCacheable("PATCH") && !isCacheable("DELETE"), "response-cache: mutating methods are never cacheable");
+
+  const key = cacheKey("GET", "https://api.example.com/x?a=1");
+  assert(getCached(key) === undefined, "response-cache: a miss returns undefined");
+
+  setCached(key, { hello: "world" }, 1000);
+  assert(cacheSize() === 1, "response-cache: setCached adds one entry");
+  const hit = getCached(key);
+  assert(hit && hit.hello === "world", "response-cache: a fresh entry within its TTL is returned on getCached");
+
+  // Different query string -> different key, no cross-contamination.
+  const key2 = cacheKey("GET", "https://api.example.com/x?a=2");
+  assert(getCached(key2) === undefined, "response-cache: a different query string is a distinct cache key (miss)");
+
+  // ttlMs <= 0 is a no-op — caching must stay opt-in.
+  const key3 = cacheKey("GET", "https://api.example.com/y");
+  setCached(key3, "should not be cached", 0);
+  assert(getCached(key3) === undefined, "response-cache: setCached with ttlMs<=0 is a no-op (opt-in only)");
+
+  // Expiry: an entry with a near-zero TTL is gone shortly after.
+  const key4 = cacheKey("GET", "https://api.example.com/z");
+  setCached(key4, "short-lived", 20);
+  await new Promise((r) => setTimeout(r, 60));
+  assert(getCached(key4) === undefined, "response-cache: an entry past its TTL is treated as a miss (lazy expiry on read)");
+
+  clearCache();
+  assert(cacheSize() === 0, "response-cache: clearCache() empties the store");
+}
+
+/**
+ * Item 24: rate-limiter.js unit tests. End-to-end wiring proof (real MCP
+ * roundtrip, wall-clock timing between real upstream hits) lives in
+ * test/integration-cli.js's testRateLimiting().
+ */
+async function testRateLimiter() {
+  console.log("\n--- Item 24: rate-limiter.js Unit Tests ---");
+  resetRateLimiter();
+
+  assert(rpsToMinIntervalMs(0) === 0 && rpsToMinIntervalMs(undefined) === 0 && rpsToMinIntervalMs(-1) === 0, "rate-limiter: rpsToMinIntervalMs treats 0/undefined/negative as disabled (0ms)");
+  assert(rpsToMinIntervalMs(2) === 500, "rate-limiter: rpsToMinIntervalMs(2) is 500ms between requests");
+  assert(rpsToMinIntervalMs(10) === 100, "rate-limiter: rpsToMinIntervalMs(10) is 100ms between requests");
+
+  // Disabled (minIntervalMs=0): back-to-back calls do not wait.
+  const disabledStart = Date.now();
+  await throttle("api.example.com", 0);
+  await throttle("api.example.com", 0);
+  assert(Date.now() - disabledStart < 50, "rate-limiter: throttle() with minIntervalMs=0 never delays");
+
+  // Enabled: second call to the SAME host within the interval is delayed.
+  resetRateLimiter();
+  const start = Date.now();
+  await throttle("api.example.com", 150);
+  await throttle("api.example.com", 150);
+  const elapsed = Date.now() - start;
+  assert(elapsed >= 130, `rate-limiter: throttle() delays a second same-host call within the interval (waited ${elapsed}ms, wanted >=~150ms)`);
+
+  // Different hosts are throttled independently — one host's rate does not
+  // penalize a different host.
+  resetRateLimiter();
+  const multiHostStart = Date.now();
+  await throttle("host-a.example.com", 500);
+  await throttle("host-b.example.com", 500);
+  assert(Date.now() - multiHostStart < 100, "rate-limiter: different hosts are throttled independently (second host's first call is not delayed)");
+
+  resetRateLimiter();
+}
+
 // ── Run all tests ──
 async function run() {
   console.log("ay-api-gen — End-to-End Tests\n");
@@ -676,6 +757,22 @@ async function run() {
     await testFileLock();
   } catch (err) {
     console.error(`\nFATAL (file-lock): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testResponseCache();
+  } catch (err) {
+    console.error(`\nFATAL (response-cache): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testRateLimiter();
+  } catch (err) {
+    console.error(`\nFATAL (rate-limiter): ${err.message}`);
     console.error(err.stack);
     failed++;
   }

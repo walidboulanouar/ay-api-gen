@@ -11,9 +11,10 @@
  *   ay-api-gen --from-mcp <file> [options]       Generate OpenAPI spec from MCP tools
  */
 
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, sep } from "node:path";
 import { mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -158,6 +159,61 @@ function sanitizeApiName(raw) {
   return cleaned || "api";
 }
 
+// T-GEN-4: a small deny-list of absolute paths that have zero legitimate
+// use as an `--output` target for this tool. Unlike T-ING-2's private-IP
+// deny-list, there's no equivalent "legitimate intranet API" carve-out
+// here — nothing this tool generates ever belongs in /etc or a user's raw
+// home directory root — so this is an unconditional refusal, no override.
+//
+// Two tiers, deliberately: system directories block themselves AND
+// everything beneath them (nothing ever legitimately writes under /etc).
+// The home directory and "/" only block an EXACT match — most real
+// projects live somewhere under $HOME, so prefix-blocking it would reject
+// virtually all normal `--output` usage. Only dumping files directly into
+// the home root or filesystem root itself is the actual smell.
+//
+// Deliberately NOT included: /var. It looks like a system directory but
+// on macOS it's where the OS temp dir (os.tmpdir(), /var/folders/...)
+// actually lives — prefix-blocking it would reject completely ordinary
+// `--output /tmp/...`-style usage, not just genuine misuse.
+const DANGEROUS_OUTPUT_PREFIX_ROOTS = [
+  "/etc", "/usr", "/bin", "/sbin", "/boot", "/root",
+  "/System", "/Library", "/Applications", "/Windows",
+].map((p) => resolve(p));
+const DANGEROUS_OUTPUT_EXACT_ROOTS = [sep, homedir()].map((p) => resolve(p));
+
+/**
+ * T-GEN-4 — `--output`/`--name` ultimately resolve to a filesystem write
+ * target the user typed themselves (never spec-derived in any current call
+ * path — see HANDOFFS.md for the trace). The threat model rates this Low
+ * and explicitly says minimal mitigation is warranted for user-supplied
+ * input; this is a proportionate two-tier response:
+ *   - A small set of catastrophic, always-wrong targets (system roots, the
+ *     bare filesystem/home root) are refused outright — no flag overrides
+ *     this, there's no legitimate reason `ay-api-gen` output belongs there.
+ *   - Anything else outside the current working directory is allowed
+ *     (deliberately writing to a sibling project or an absolute path
+ *     elsewhere is a normal, supported use of `--output`) but gets a
+ *     visible warning so a typo'd `--output` isn't silently surprising.
+ * @param {string} resolvedPath - already-resolved absolute path
+ */
+function checkOutputPathSafety(resolvedPath) {
+  const isDangerous =
+    DANGEROUS_OUTPUT_EXACT_ROOTS.some((root) => resolvedPath === root) ||
+    DANGEROUS_OUTPUT_PREFIX_ROOTS.some((root) => resolvedPath === root || resolvedPath.startsWith(root + sep));
+
+  if (isDangerous) {
+    throw new Error(
+      `Refusing to write to "${resolvedPath}" — this looks like a system or home directory root, ` +
+      `never a legitimate ay-api-gen output target. Choose a project-scoped --output path.`
+    );
+  }
+  const cwd = resolve(process.cwd());
+  if (resolvedPath !== cwd && !resolvedPath.startsWith(cwd + sep)) {
+    console.log(`  warn: output directory is outside the current working directory: ${resolvedPath}`);
+  }
+}
+
 // ── Subcommands ──
 
 async function cmdList() {
@@ -242,8 +298,9 @@ async function cmdReverse(opts) {
     baseUrl: process.env.API_BASE_URL,
   });
 
-  const outputPath = opts.output || "openapi-from-mcp.json";
-  writeFileSync(resolve(outputPath), JSON.stringify(spec, null, 2) + "\n", "utf-8");
+  const outputPath = resolve(opts.output || "openapi-from-mcp.json");
+  checkOutputPathSafety(outputPath);
+  writeFileSync(outputPath, JSON.stringify(spec, null, 2) + "\n", "utf-8");
   console.log(`OpenAPI spec written to: ${outputPath}`);
 }
 
@@ -330,6 +387,7 @@ async function cmdGenerate(source, opts) {
 
   // Output directory
   const outputDir = resolve(opts.output || `.ay/apis/${apiName}`);
+  checkOutputPathSafety(outputDir);
   mkdirSync(outputDir, { recursive: true });
 
   // Copy runtime security helpers into the output dir — the generated
@@ -474,9 +532,15 @@ async function main() {
     const config = await runInitWizard();
     if (config) {
       console.log(`\n  Generating ${config.name}...`);
-      // Write .env if auth was provided
+      // Write .env if auth was provided. Uses the same sanitizeApiName()
+      // as cmdGenerate's own outputDir computation below — previously this
+      // used raw config.name (unsanitized user input from the wizard's
+      // "API name" prompt), which could both land outside .ay/apis/
+      // (T-GEN-4) AND write the .env into a different directory than
+      // cmdGenerate ultimately generates the server into.
       if (Object.keys(config.envVars).length > 0) {
-        const outputDir = resolve(opts.output || `.ay/apis/${config.name}`);
+        const outputDir = resolve(opts.output || `.ay/apis/${sanitizeApiName(config.name)}`);
+        checkOutputPathSafety(outputDir);
         mkdirSync(outputDir, { recursive: true });
         const envLines = Object.entries(config.envVars).map(([k, v]) => `${k}=${v}`);
         writeFileSync(resolve(outputDir, ".env"), envLines.join("\n") + "\n", "utf-8");

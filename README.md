@@ -171,12 +171,34 @@ picture):
   `ay-api-gen:<name>` in `settings.json`, never overwriting an existing
   unprefixed entry from another tool without `--force`.
 - **Spec linter (`--mode=b`).** Warns by default on unauthenticated mutating
-  endpoints and sensitive identifiers in path params; pass `--mode=b` to block
-  generation on HIGH/CRITICAL findings, with `--accept-risks=<id>:<slug>,...`
-  to explicitly override.
+  endpoints, sensitive identifiers in path params, and privilege/value-sensitive
+  request-body fields (`role`, `is_admin`, `balance`, etc. — unless marked
+  `readOnly: true`); pass `--mode=b` to block generation on HIGH/CRITICAL
+  findings, with `--accept-risks=<id>:<slug>,...` to explicitly override. Run it
+  standalone, free, no license needed: `ay-api-gen audit --baseline <spec>`.
+- **Path-safety guard on `--output`.** A small deny-list of catastrophic targets
+  (system directories, the bare home directory root) is refused outright;
+  anything else outside the current working directory is allowed (that's a
+  normal use of `--output`) but prints a visible warning.
+- **Locked, concurrency-safe writes.** `settings.json` and the API registry are
+  protected by an advisory file lock — two `ay-api-gen` invocations racing to
+  write the same file (e.g. a CI regen overlapping a local run) can't silently
+  clobber each other's update.
 
 None of this defends against a fully malicious, deliberately-targeted spec with
 unlimited creativity — see the threat model for what's still open.
+
+## Runtime tuning (`serve` / generated servers)
+
+Both opt-in — off by default, since the right values are per-API and an
+unrequested default would be a surprising behavior change:
+
+- **Response caching.** `AY_CACHE_TTL_MS=<ms>` caches idempotent `GET`/`HEAD`
+  responses in memory for the given duration, keyed by method + full URL.
+  Mutating methods are never cached.
+- **Rate limiting.** `AY_RATE_LIMIT_RPS=<n>` throttles (delays, doesn't reject)
+  outgoing requests to no more than `n` per second per host — protects both the
+  upstream API and your own API key from being hammered by a fast-looping agent.
 
 ## Supported specs
 

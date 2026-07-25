@@ -12,10 +12,11 @@
 | Source delta (v0.1.1 → S1 security baseline) | +3 files (`desc-sanitize.js`, `url-guard.js`, `spec-linter.js`), 11 files modified | See CHANGELOG "Added (S1 sprint)" |
 | Source delta (S1 → S2 hardening) | 0 new src files, 5 modified (`auth-codegen.js`, `env-generator.js`, `settings-injector.js`, `cli-generator.js`, `bin/ay-api-gen.js`) | See CHANGELOG "Added (S2 sprint)" |
 | Source delta (S2 → S3 locking + audits + yaml) | +1 file (`src/file-lock.js`), `src/yaml-parser.js` rewritten (custom parser → thin `yaml` wrapper), 4 modified (`settings-injector.js`, `registry.js`, `spec-linter.js`, `bin/ay-api-gen.js`) | See CHANGELOG "Added (S3 sprint)" |
-| Test files | 4 (`run.js`, `integration-cli.js`, `edge-cases.json`, `fixtures/` — 3 files) | |
-| Tests passing | 114 / 114 in `test/run.js` + 80 / 80 in `test/integration-cli.js` | `node test/run.js` and `node test/integration-cli.js`, run 2026-07-25 |
+| Source delta (S3 → T-GEN-4 + backlog items) | +2 files (`response-cache.js`, `rate-limiter.js`), 2 modified (`bin/ay-api-gen.js`, `src/runtime/mcp-server.js`) | See CHANGELOG, latest entries |
+| Test files | 5 (`run.js`, `integration-cli.js`, `edge-cases.json`, `fixtures/` — 3 files) | |
+| Tests passing | 129 / 129 in `test/run.js` + 105 / 105 in `test/integration-cli.js` | `node test/run.js` and `node test/integration-cli.js`, run 2026-07-25 |
 | Test coverage of v0.1.1 CLI surface | **100%** of doctor/init/discover/diff/slim/filter now have real integration tests | `test/integration-cli.js`, closes B-04 |
-| Test coverage of S1+S2+S3 security fixes | 100% of S1's 7 tasks + S2's T-GEN-1/T-SET-2 findings + S3's B-09/T-GEN-2/T-API-3 have ≥1 regression test | `testSecurityHardening()`, `testGenInterpolationHardening()`, `testFileLock()` in `test/run.js`; `testConcurrentWriteLocking()`, `testGen2PackageJsonSafety()` in `test/integration-cli.js` |
+| Test coverage of S1+S2+S3 security fixes | 100% of S1's 7 tasks + S2's T-GEN-1/T-SET-2 findings + S3's B-09/T-GEN-2/T-API-3/T-GEN-4 have ≥1 regression test | `testSecurityHardening()`, `testGenInterpolationHardening()`, `testFileLock()` in `test/run.js`; `testConcurrentWriteLocking()`, `testGen2PackageJsonSafety()`, `testGen4OutputPathSafety()` in `test/integration-cli.js` |
 | Dependencies | 2 (`@modelcontextprotocol/sdk@1.29.0`, `yaml@2.9.0`), both exact-pinned, `yaml` has zero transitive deps | `npm ls`, `package.json` |
 | Doc files (docs/) | 4 (.md) + 2 root .md + 2 .html | ARCHITECTURE, PRIMITIVES, PATTERNS, DEPLOYMENT, README, CLAUDE.md, SETUP-REQUIREMENTS.html, STANDING.html |
 | Security doc files | 3 | THREAT-MODEL.md, ADR-006…, RFC-RESPONSES-walid.md |
@@ -77,6 +78,18 @@
 | Subagent usage | 1 parallel subagent (yaml dependency evaluation + migration), scoped to non-overlapping files, zero merge conflicts on return |
 | New tests | 8 deterministic `file-lock.js` unit tests + 1 six-process CLI stress test (B-09); 13 tests (T-GEN-2); 3 tests (T-API-3); full corpus re-run + new anchor/alias/block-scalar tests (S2-05) |
 | Blockers count | 0 active for S3 work itself; B-09 formally resolved |
+
+## Post-S3: T-GEN-4 + backlog items 23/24 + backlog survey (landed 2026-07-25)
+
+| Metric | Value |
+|--------|-------|
+| Goal | Fix T-GEN-4, survey the full remaining backlog for buildable-without-a-human-decision items, build anything that qualified |
+| Tasks completed | T-GEN-4, backlog survey (13 items assessed: 7 C-items + 6 numbered items), items 23 + 24 |
+| Verdict on the rest of the backlog | All 7 C-items blocked (ADR-012 still Proposed, or real infra/credentials/licensing decisions needed); items 19/21 deferred (real scope / self-admitted open questions); item 20 deferred (needs a security-relevant decision) |
+| Bugs found beyond literal task scope | A self-inflicted `/var` deny-list bug (would have blocked macOS's own tmpdir) caught by the test suite before shipping; a related `init`-wizard `.env`-path bug (unsanitized name causing `.env` and the generated server to potentially land in different directories) |
+| Test rigor upgrade | Items 23/24 verified via a real MCP client/server protocol roundtrip (`@modelcontextprotocol/sdk`'s `Client` + `StdioClientTransport`), not just unit tests of the underlying primitives — a new, more rigorous pattern for future `runtime/mcp-server.js` features |
+| New tests | 18 (T-GEN-4) + 15 unit (response-cache.js, rate-limiter.js) + 7 real-protocol (items 23/24) |
+| Assessment | This is the natural stopping point — see PROGRESS-LOG.md |
 
 ## Tracking / process
 
