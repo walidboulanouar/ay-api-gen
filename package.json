@@ -30,7 +30,8 @@
   },
   "author": "Walid Boulanouar",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "yaml": "2.9.0"
   },
   "keywords": [
     "openapi",

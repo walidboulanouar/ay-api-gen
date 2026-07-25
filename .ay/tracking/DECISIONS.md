@@ -104,6 +104,15 @@ Decision: Three channels — CLI flag, `.ay-api-gen.yml` config (primary, PR-rev
 Schema sketch is in docs/security/RFC-RESPONSES-walid.md.
 Date: 2026-05-22
 
+[ADR-013] Replace hand-rolled YAML parser with the `yaml` npm package (S2-05)
+Status: Accepted
+Context: `src/yaml-parser.js` was a deliberately minimal, zero-dep YAML subset parser, explicitly documented as not supporting anchors/aliases, real multi-line block scalars, complex keys, or merge keys. S2's adversarial corpus (13 hand-built cases) proved it never crashed on adversarial input, but its limited feature support meant some legitimate OpenAPI YAML specs (using anchors for shared schema fragments, or `|`/`>` block scalars for long descriptions) would silently mis-parse rather than fail loudly.
+Decision: Replace it with `yaml@2.9.0` (exact-pinned, zero transitive dependencies, single-maintainer `eemeli/yaml` — the de facto standard Node YAML library), wrapped in a thin compatibility shim that preserves the exact `parseYaml(str) -> object|null`, never-throws contract so `src/parser.js`'s one call site needed zero changes.
+Rationale: A real parser closes a correctness gap (anchors/aliases, block scalars now actually work) with less code to maintain, at the cost of one new dependency — acceptable given it's a leaf package with no further transitive surface, and the project already depends on `@modelcontextprotocol/sdk`.
+Behavior change accepted: duplicate YAML map keys now cause a parse failure (returns `null`) instead of silently keeping the last value — arguably more correct (duplicate keys are a spec smell), verified via the adversarial corpus re-run (all 13 original cases + new positive cases for anchors/aliases and block scalars: 103/103 passing in `test/run.js`).
+Alternatives considered: `js-yaml` (also solid, but `yaml` has no dependencies while `js-yaml` doesn't either in recent versions — chose `yaml` for its more actively maintained TypeScript-first API and because it was the one already vetted via `pin-guard verify`).
+Date: 2026-07-25
+
 ---
 
 ## Decision style notes

@@ -15,7 +15,12 @@ import { resolveBaseUrl, assertHostAllowed } from "../src/url-guard.js";
 import { lintSpec, parseAcceptRisks } from "../src/spec-linter.js";
 import { injectSettings } from "../src/settings-injector.js";
 import { parseYaml } from "../src/yaml-parser.js";
-import { mkdtempSync, mkdirSync, writeFileSync as fsWriteFileSync, readFileSync as fsReadFileSync } from "node:fs";
+import { withFileLock } from "../src/file-lock.js";
+import { registerAPI } from "../src/registry.js";
+import {
+  mkdtempSync, mkdirSync, writeFileSync as fsWriteFileSync, readFileSync as fsReadFileSync,
+  closeSync, openSync, utimesSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 
@@ -285,25 +290,40 @@ async function testSecurityHardening() {
   } catch (e) { deniedByAsyncConfirm = /Aborted/.test(e.message); }
   assert(deniedByAsyncConfirm, "T-SET-2: async confirmOverwrite returning false is awaited and still aborts (not treated as truthy Promise)");
 
-  // T-API-1 / T-API-2: spec-linter
+  // T-API-1 / T-API-2 / T-API-3: spec-linter
   const dirtySpec = {
     info: {}, securitySchemes: {}, endpoints: [
       { method: "POST", path: "/charge", security: [], parameters: [] },
       { method: "GET", path: "/pets", security: [], parameters: [] },
       { method: "GET", path: "/users/{ssn}/profile", security: [], parameters: [{ name: "ssn", in: "path" }] },
+      {
+        method: "PUT", path: "/user", security: [], parameters: [],
+        requestBody: { schema: { properties: {
+          name: { type: "string" },
+          is_admin: { type: "boolean" },
+          balance: { type: "number", readOnly: true },
+        } } },
+      },
     ],
   };
   const findings = lintSpec(dirtySpec);
   assert(findings.some(f => f.id === "T-API-1" && f.endpoint === "POST /charge" && f.severity === "high"), "T-API-1: fires on unauthenticated mutating endpoint");
   assert(!findings.some(f => f.endpoint === "GET /pets"), "T-API-1: does not fire on GET endpoints");
   assert(findings.some(f => f.id === "T-API-2" && f.message.includes("ssn")), "T-API-2: fires on sensitive path param");
+  assert(findings.some(f => f.id === "T-API-3" && f.message.includes("is_admin")), "T-API-3: fires on a writable is_admin request-body field");
+  assert(!findings.some(f => f.id === "T-API-3" && f.message.includes("balance")), "T-API-3: does not fire on a field explicitly marked readOnly");
+  assert(!findings.some(f => f.id === "T-API-3" && f.message.includes('"name"')), "T-API-3: does not fire on an ordinary, non-privilege field name");
 
   const cleanSpec = {
     info: {}, securitySchemes: { bearer: { type: "http", scheme: "bearer" } }, endpoints: [
       { method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [] },
+      {
+        method: "PUT", path: "/user", security: [{ bearer: [] }], parameters: [],
+        requestBody: { schema: { properties: { role: { type: "string", readOnly: true } } } },
+      },
     ],
   };
-  assert(lintSpec(cleanSpec).length === 0, "spec-linter: clean spec produces no findings");
+  assert(lintSpec(cleanSpec).length === 0, "spec-linter: clean spec (incl. a readOnly role field) produces no findings");
   assert(parseAcceptRisks("T-API-1:POST_charge").has("T-API-1:POST_charge"), "spec-linter: parseAcceptRisks parses comma-separated list");
 }
 
@@ -393,8 +413,13 @@ async function testYamlAdversarialCorpus() {
 
   const cases = [
     { name: "tab indentation (invalid YAML)", yaml: "openapi: 3.0.0\npaths:\n\t/users:\n\t\tget: {}\n" },
-    { name: "duplicate keys", yaml: "openapi: 3.0.0\ninfo:\n  title: First\n  title: Second\n" },
-    { name: "anchors/aliases (unsupported, must not throw)", yaml: "defaults: &defaults\n  type: string\nfield:\n  <<: *defaults\n" },
+    // The real `yaml` package (YAML 1.2 core schema) rejects duplicate map
+    // keys by default (`Map keys must be unique`) instead of the old custom
+    // parser's silent last-key-wins behavior. That's arguably more correct —
+    // duplicate keys in a spec are a genuine smell — and the wrapper still
+    // degrades to `null` rather than letting the exception escape.
+    { name: "duplicate keys (now rejected, not silently last-key-wins)", yaml: "openapi: 3.0.0\ninfo:\n  title: First\n  title: Second\n" },
+    { name: "anchors/aliases (now actually resolved, must not throw)", yaml: "defaults: &defaults\n  type: string\nfield:\n  <<: *defaults\n" },
     { name: "deeply nested flow arrays", yaml: `a: ${"[".repeat(200)}1${"]".repeat(200)}` },
     { name: "multi-document YAML (---)", yaml: "openapi: 3.0.0\n---\nopenapi: 3.0.1\n" },
     { name: "unicode in strings", yaml: 'title: "API éèê 中文 😀"\nversion: "1.0"\n' },
@@ -459,6 +484,164 @@ paths:
   const endpoints = extractEndpoints(parsedYaml).endpoints;
   assert(endpoints.length === 2, "YAML corpus: extractEndpoints() finds both operations from the YAML-parsed spec");
   assert(endpoints.some(e => e.toolName === "list_widgets"), "YAML corpus: operationId-derived tool name survives the YAML round-trip");
+
+  // Explicitly confirm the duplicate-keys behavior change: the real `yaml`
+  // package rejects duplicate map keys, and the wrapper degrades that to
+  // `null` (per the "never throws" contract) rather than silently picking
+  // a winner like the old custom parser did.
+  const dupKeysResult = parseYaml("openapi: 3.0.0\ninfo:\n  title: First\n  title: Second\n");
+  assert(dupKeysResult === null, "YAML corpus: duplicate map keys now degrade to null instead of silent last-key-wins");
+
+  // ── New capability proofs (real `yaml` package vs. old custom parser) ──
+
+  // (a) Anchors/aliases actually resolve to the right value. The old parser
+  // could only avoid throwing on this syntax; it never resolved the alias —
+  // it had no notion of & / * at all, so an anchored value would just come
+  // through as a literal "&base ..." string instead of an object, and an
+  // alias site would come through as a literal "*base" string.
+  const anchorYaml = [
+    "components:",
+    "  schemas:",
+    "    Base: &base",
+    "      type: string",
+    "      format: uuid",
+    "    Other: *base",
+  ].join("\n");
+  const anchorResult = parseYaml(anchorYaml);
+  assert(anchorResult !== null, "YAML corpus: anchor/alias doc parses to a non-null object");
+  assert(
+    anchorResult?.components?.schemas?.Base?.type === "string" &&
+      anchorResult?.components?.schemas?.Base?.format === "uuid",
+    "YAML corpus: anchored value (&base) parses as a real nested object, not a literal string"
+  );
+  assert(
+    anchorResult?.components?.schemas?.Other?.type === "string" &&
+      anchorResult?.components?.schemas?.Other?.format === "uuid",
+    "YAML corpus: alias (*base) resolves to the same value as its anchor"
+  );
+
+  // (b) A real multi-line block scalar preserves its content. The old parser
+  // treated a bare `|` or `>` value as "start a nested block" (i.e. it just
+  // recursed into a child object), which is not the same as actually parsing
+  // literal/folded block scalar text.
+  const blockScalarYaml = [
+    "description: |",
+    "  Line one.",
+    "  Line two.",
+    "summary: >",
+    "  This folds",
+    "  into one line.",
+  ].join("\n");
+  const blockScalarResult = parseYaml(blockScalarYaml);
+  assert(blockScalarResult !== null, "YAML corpus: block scalar doc parses to a non-null object");
+  assert(
+    blockScalarResult?.description === "Line one.\nLine two.\n",
+    "YAML corpus: literal block scalar (|) preserves line breaks verbatim"
+  );
+  assert(
+    blockScalarResult?.summary === "This folds into one line.\n",
+    "YAML corpus: folded block scalar (>) folds line breaks into spaces"
+  );
+}
+
+/**
+ * B-09: file-lock.js regression tests.
+ *
+ * A real cross-process race (spawning many `ay-api-gen generate` child
+ * processes concurrently) is covered in test/integration-cli.js, but that
+ * test can only prove "no data loss WITH the lock" — it can't reliably
+ * prove "data loss WITHOUT the lock" as a red/green check, because the
+ * actual read-modify-write critical section (readFileSync -> mutate ->
+ * writeFileSync, all synchronous) is narrow enough relative to full CLI
+ * process startup that even 20 real concurrent processes rarely land in
+ * it at the same instant on a fast local disk — confirmed by manually
+ * disabling the lock and re-running that test 3x at N=6 and once at
+ * N=20 with zero reproductions. Race conditions are probabilistic; failing
+ * to reproduce one under light load doesn't mean it can't happen under
+ * real-world conditions (slower disks, heavier concurrency, network
+ * filesystems) — which is exactly why it's worth fixing regardless.
+ *
+ * These tests instead exercise the locking PRIMITIVE directly and
+ * deterministically, by making the critical section artificially slow
+ * (a real `await new Promise(setTimeout)` inside the lock) so mutual
+ * exclusion is provable without depending on process-scheduling luck.
+ */
+async function testFileLock() {
+  console.log("\n--- B-09: file-lock.js Regression Tests ---");
+
+  const lockTestDir = mkdtempSync(resolvePath(tmpdir(), "ay-file-lock-test-"));
+  const targetFile = resolvePath(lockTestDir, "shared.json");
+
+  // Mutual exclusion: N concurrent critical sections against the same path
+  // must never overlap, even when each one is artificially slow.
+  let concurrentCount = 0;
+  let maxObservedConcurrent = 0;
+  const completedOrder = [];
+
+  async function slowCriticalSection(id) {
+    return withFileLock(targetFile, async () => {
+      concurrentCount++;
+      maxObservedConcurrent = Math.max(maxObservedConcurrent, concurrentCount);
+      await new Promise((r) => setTimeout(r, 40));
+      completedOrder.push(id);
+      concurrentCount--;
+    });
+  }
+
+  await Promise.all([0, 1, 2, 3, 4].map(slowCriticalSection));
+  assert(maxObservedConcurrent === 1, `file-lock: withFileLock enforces mutual exclusion (max concurrent observed: ${maxObservedConcurrent})`);
+  assert(completedOrder.length === 5, "file-lock: all 5 queued critical sections eventually ran");
+
+  // The return value of fn() must propagate through withFileLock.
+  const returned = await withFileLock(targetFile, () => 42);
+  assert(returned === 42, "file-lock: withFileLock returns fn()'s return value");
+
+  // A throw inside fn() must propagate (not be swallowed) AND still release the lock.
+  let threw = false;
+  try {
+    await withFileLock(targetFile, () => { throw new Error("boom"); });
+  } catch (e) {
+    threw = e.message === "boom";
+  }
+  assert(threw, "file-lock: an error thrown inside fn() propagates to the caller");
+
+  const afterThrow = await withFileLock(targetFile, () => "still works");
+  assert(afterThrow === "still works", "file-lock: the lock is released even when fn() throws (no deadlock)");
+
+  // A stale lock (simulating a crashed process that never released it)
+  // must be broken rather than blocking forever.
+  const staleLockPath = `${targetFile}.lock`;
+  closeSync(openSync(staleLockPath, "w"));
+  const oldTime = new Date(Date.now() - 60_000); // 60s old, past the default 15s staleMs
+  utimesSync(staleLockPath, oldTime, oldTime);
+  const staleResult = await withFileLock(targetFile, () => "broke the stale lock", { timeoutMs: 2000 });
+  assert(staleResult === "broke the stale lock", "file-lock: a stale lock (older than staleMs) is broken rather than blocking indefinitely");
+
+  // A genuinely held lock should cause a short-timeout acquire to fail cleanly.
+  let releaseHeldLock;
+  const heldLockPromise = withFileLock(targetFile, () => new Promise((res) => { releaseHeldLock = res; }));
+  await new Promise((r) => setTimeout(r, 20)); // let the first call actually acquire the lock
+  let timedOut = false;
+  try {
+    await withFileLock(targetFile, () => "should not get here", { timeoutMs: 300 });
+  } catch (e) {
+    timedOut = /Timed out waiting for lock/.test(e.message);
+  }
+  assert(timedOut, "file-lock: a short acquire timeout against a genuinely held lock fails with a clear error, not a hang");
+  releaseHeldLock();
+  await heldLockPromise;
+
+  // registerAPI() (registry.js) must be usable concurrently without losing
+  // an entry — same lock, different consumer, deterministic via in-process
+  // concurrency rather than spawned child processes.
+  const registryProjectDir = mkdtempSync(resolvePath(tmpdir(), "ay-registry-lock-test-"));
+  await Promise.all(
+    Array.from({ length: 8 }, (_, i) =>
+      registerAPI(`api-${i}`, { source: "x", baseUrl: "https://8.8.8.8", outputDir: "x", endpointCount: 1, authTypes: ["none"] }, registryProjectDir)
+    )
+  );
+  const registryContent = JSON.parse(fsReadFileSync(resolvePath(registryProjectDir, ".ay/apis/registry.json"), "utf-8"));
+  assert(Object.keys(registryContent.apis).length === 8, `file-lock: registerAPI() called 8x concurrently in-process loses no entries (found ${Object.keys(registryContent.apis).length})`);
 }
 
 // ── Run all tests ──
@@ -485,6 +668,14 @@ async function run() {
     await testYamlAdversarialCorpus();
   } catch (err) {
     console.error(`\nFATAL (YAML corpus): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testFileLock();
+  } catch (err) {
+    console.error(`\nFATAL (file-lock): ${err.message}`);
     console.error(err.stack);
     failed++;
   }

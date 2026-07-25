@@ -134,6 +134,30 @@ function formatAuthTypes(securitySchemes) {
   });
 }
 
+/**
+ * Normalize a candidate API name (spec-derived title OR an explicit --name
+ * flag) to a safe charset before it's used to build a filesystem path
+ * (default --output dir), an npm package name (generated package.json —
+ * T-GEN-2), and a registry/settings key.
+ *
+ * Previously only the spec-title-derived fallback went through this
+ * normalization; a raw `--name` value was used as-is. That's user-supplied
+ * (not spec-derived, so outside T-GEN-2's stated threat), but it still let
+ * a careless `--name ../../evil` produce a default output path outside the
+ * intended `.ay/apis/` tree, and an unnormalized value could produce an
+ * invalid npm package name. Applying the same sanitizer to both sources
+ * closes both gaps and gives the field one consistent safety guarantee
+ * regardless of where it came from.
+ */
+function sanitizeApiName(raw) {
+  const cleaned = String(raw || "")
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .toLowerCase()
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || "api";
+}
+
 // ── Subcommands ──
 
 async function cmdList() {
@@ -161,7 +185,7 @@ async function cmdList() {
 
 async function cmdRemove(name) {
   const { unregisterAPI } = await import("../src/registry.js");
-  if (unregisterAPI(name)) {
+  if (await unregisterAPI(name)) {
     console.log(`Removed "${name}" from registry.`);
     console.log(`Note: Files in .ay/apis/${name}/ were NOT deleted. Remove manually if needed.`);
   } else {
@@ -275,9 +299,7 @@ async function cmdGenerate(source, opts) {
     }
   }
 
-  const apiName = opts.name ||
-    parsed.info.title?.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().replace(/-+/g, "-") ||
-    "api";
+  const apiName = sanitizeApiName(opts.name || parsed.info.title);
 
   console.log(`API: ${parsed.info.title || apiName} (${parsed.endpoints.length} endpoints)`);
   console.log(`Base URL: ${parsed.baseUrl}`);
@@ -367,7 +389,7 @@ async function cmdGenerate(source, opts) {
   }, null, 2) + "\n", "utf-8");
 
   // Register in API registry
-  registerAPI(apiName, {
+  await registerAPI(apiName, {
     source,
     baseUrl: parsed.baseUrl,
     outputDir,

@@ -24,6 +24,13 @@
 - 13-case hand-built YAML adversarial mini-corpus in `test/run.js` (`testYamlAdversarialCorpus()`) — tab indentation, duplicate keys, anchors/aliases, deep nesting, multi-document, unicode, CRLF, stack-safety at 300-level nesting, and more, plus a positive end-to-end round-trip case.
 - `test:integration` and `test:all` npm scripts.
 
+### Added (S3 sprint, landed 2026-07-25)
+- Fixed B-09: unlocked read-modify-write race on `settings.local.json` / `registry.json` — new `src/file-lock.js` (dependency-free advisory lock via atomic exclusive file creation), applied to `injectSettings()` and `registerAPI()`/`unregisterAPI()`. `injectSettings()`, `registerAPI()`, `unregisterAPI()` are now `async`.
+- Fixed T-GEN-2: `--name` bypassed the sanitization the spec-title-derived fallback already had, risking path traversal in the default output directory. New `sanitizeApiName()` in `bin/ay-api-gen.js`, applied uniformly.
+- Added T-API-3 (mass-assignment heuristic) to `src/spec-linter.js` — flags privilege/value-sensitive request-body fields (`role`, `is_admin`, `balance`, etc.) on mutating endpoints unless `readOnly: true`.
+- Replaced the hand-rolled `src/yaml-parser.js` with a thin wrapper around `yaml@2.9.0` (exact-pinned, zero transitive deps) — see ADR-013. Anchors/aliases and block scalars (`|`/`>`) now actually work.
+- New test coverage: 8 deterministic `file-lock.js` unit tests + a 6-process real-CLI concurrency stress test (B-09); 13 regression tests for the `--name` path-traversal / package.json-injection fix (T-GEN-2); T-API-3 unit tests; full YAML corpus re-run against the new parser plus new anchor/alias and block-scalar positive tests.
+
 ## [0.1.1] — 2026-05-11
 
 ### Added (source landed, integration tests pending)

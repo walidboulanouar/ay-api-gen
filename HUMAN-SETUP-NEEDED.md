@@ -17,6 +17,6 @@ Credentials / decisions a human must provide. Deduplicated; append here as new o
 
 ---
 
-## Not needed for this session's work
+## Not needed for the S1/S2/S3 sessions' work
 
-Everything built in the 2026-07-25 S1 security-baseline session (see `PROGRESS-LOG.md`) is local static analysis and codegen — no new external service, API key, or credential was introduced. Generated MCP servers/CLIs need *their own* per-API credentials (`API_KEY`, `API_BEARER_TOKEN`, etc.) but those are supplied by whoever runs `ay-api-gen` against a given spec, not by this project's maintainers — already documented per-API in each generated `.env.example`.
+Everything built across the 2026-07-25 S1, S2, and S3 sessions (see `PROGRESS-LOG.md`) is local static analysis, codegen, and one new public npm dependency (`yaml@2.9.0` — no auth needed to install, it's a public unscoped package). No new external service, API key, or credential was introduced. Generated MCP servers/CLIs need *their own* per-API credentials (`API_KEY`, `API_BEARER_TOKEN`, etc.) but those are supplied by whoever runs `ay-api-gen` against a given spec, not by this project's maintainers — already documented per-API in each generated `.env.example`.

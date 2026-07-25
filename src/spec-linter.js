@@ -16,6 +16,23 @@ const SENSITIVE_PATH_PATTERNS = [
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// T-API-3: request-body field names that commonly gate privilege/value and
+// have no legitimate reason to be client-settable unless explicitly marked
+// readOnly (which would mean the field only ever appears in *responses* —
+// OpenAPI reuses the same schema for request/response bodies, so a
+// writable-looking `role`/`balance` field here is a mass-assignment smell).
+const MASS_ASSIGNMENT_FIELD_PATTERNS = [
+  /^is[_-]?admin$/i, /^admin$/i,
+  /^role(s)?$/i,
+  /^permission(s)?$/i,
+  /^privilege(s)?$/i,
+  /^balance$/i,
+  /^credit(s)?$/i,
+  /^is[_-]?verified$/i, /^verified$/i,
+  /^is[_-]?superuser$/i, /^superuser$/i,
+  /^account[_-]?type$/i,
+];
+
 /**
  * @param {object} ep - endpoint from extractEndpoints()
  * @returns {string} stable slug for --accept-risks matching, e.g. "POST_charge"
@@ -89,6 +106,35 @@ function checkApi2_SensitiveInPath(parsed) {
   return findings;
 }
 
+function checkApi3_MassAssignment(parsed) {
+  const findings = [];
+
+  for (const ep of parsed.endpoints) {
+    if (!MUTATING_METHODS.has(ep.method)) continue;
+
+    const props = ep.requestBody?.schema?.properties;
+    if (!props) continue;
+
+    for (const [key, propSchema] of Object.entries(props)) {
+      if (propSchema?.readOnly === true) continue; // response-only per the spec's own schema
+
+      if (MASS_ASSIGNMENT_FIELD_PATTERNS.some((re) => re.test(key))) {
+        const endpointLabel = `${ep.method} ${ep.path}`;
+        findings.push({
+          id: "T-API-3",
+          severity: "medium",
+          endpoint: endpointLabel,
+          endpointSlug: endpointSlug(ep),
+          message: `Request body field "${key}" on "${endpointLabel}" matches a privilege/value-sensitive name and is not marked readOnly.`,
+          remediation: "Mark the field `readOnly: true` if clients should never set it, or move privilege/balance changes to a separate, more tightly-scoped endpoint.",
+        });
+      }
+    }
+  }
+
+  return findings;
+}
+
 /**
  * @param {object} parsed - Output from extractEndpoints()
  * @returns {Array<object>} findings
@@ -97,6 +143,7 @@ export function lintSpec(parsed) {
   const findings = [];
   findings.push(...checkApi1_UnauthMutating(parsed));
   findings.push(...checkApi2_SensitiveInPath(parsed));
+  findings.push(...checkApi3_MassAssignment(parsed));
   return findings;
 }
 

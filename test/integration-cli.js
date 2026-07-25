@@ -201,7 +201,7 @@ async function testDoctor() {
   spec.servers[0].url = origin;
 
   try {
-    registerAPI("doctor-fixture", {
+    await registerAPI("doctor-fixture", {
       source: `${origin}/openapi.json`,
       baseUrl: origin,
       outputDir: resolve(tmp, "out-doctor"),
@@ -223,7 +223,7 @@ async function testDoctor() {
 
   // Unreachable spec source should report a clean failure, not crash the CLI.
   const tmp2 = mkTmpProject();
-  registerAPI("doctor-unreachable", {
+  await registerAPI("doctor-unreachable", {
     source: "http://127.0.0.1:1/definitely-not-listening.json",
     baseUrl: "http://127.0.0.1:1",
     outputDir: resolve(tmp2, "out"),
@@ -322,10 +322,108 @@ async function testAuditBaseline() {
   assert(acceptCode === 0, "audit --baseline --mode=b: exits 0 once every HIGH finding is explicitly accepted via --accept-risks");
 }
 
+// ── B-09: concurrent writers must not lose an update to settings.local.json / registry.json ──
+async function testConcurrentWriteLocking() {
+  console.log("\n--- Integration: B-09 concurrent-write locking ---");
+  const tmp = mkTmpProject();
+  const spec = resolve(FIXTURES, "diff-a.json");
+  const N = 6;
+
+  // N real `ay-api-gen generate` invocations, same cwd (so they share the
+  // same registry.json AND settings.local.json), launched genuinely
+  // concurrently via Promise.all — this is the actual race B-09 describes
+  // (e.g. a CI regen overlapping a local run), not a simulated one.
+  const runs = Array.from({ length: N }, (_, i) => {
+    const outDir = resolve(tmp, `out-${i}`);
+    preventAutoInstall(outDir);
+    return runCLI([spec, "--output", outDir, "--name", `concurrent-api-${i}`], { cwd: tmp, timeout: 30000 });
+  });
+  const results = await Promise.all(runs);
+
+  assert(results.every(r => r.code === 0), `B-09: all ${N} concurrent generate invocations exit 0 (got: ${results.map(r => r.code).join(",")})`);
+
+  const registry = JSON.parse(readFileSync(resolve(tmp, ".ay/apis/registry.json"), "utf-8"));
+  const registeredNames = Object.keys(registry.apis);
+  assert(registeredNames.length === N, `B-09: registry.json has all ${N} entries, not lost to a race (found ${registeredNames.length}: ${registeredNames.join(",")})`);
+  for (let i = 0; i < N; i++) {
+    assert(registeredNames.includes(`concurrent-api-${i}`), `B-09: registry.json contains concurrent-api-${i}`);
+  }
+
+  const settings = JSON.parse(readFileSync(resolve(tmp, ".claude/settings.local.json"), "utf-8"));
+  const settingsKeys = Object.keys(settings.mcpServers || {});
+  assert(settingsKeys.length === N, `B-09: settings.local.json has all ${N} entries, not lost to a race (found ${settingsKeys.length}: ${settingsKeys.join(",")})`);
+  for (let i = 0; i < N; i++) {
+    assert(settingsKeys.includes(`ay-api-gen:concurrent-api-${i}`), `B-09: settings.local.json contains ay-api-gen:concurrent-api-${i}`);
+  }
+
+  // Lock files must not be left behind after every writer released them.
+  const { existsSync: exists } = await import("node:fs");
+  assert(!exists(resolve(tmp, ".ay/apis/registry.json.lock")), "B-09: registry.json.lock is cleaned up after all writers finish");
+  assert(!exists(resolve(tmp, ".claude/settings.local.json.lock")), "B-09: settings.local.json.lock is cleaned up after all writers finish");
+}
+
+// ── T-GEN-2: generated package.json field injection / --name path traversal ──
+async function testGen2PackageJsonSafety() {
+  console.log("\n--- Integration: T-GEN-2 package.json / --name safety ---");
+  const tmp = mkTmpProject();
+  const spec = resolve(FIXTURES, "diff-a.json");
+
+  // A crafted --name attempting to escape the default `.ay/apis/` output
+  // tree must not produce files outside it.
+  // The sanitized name is predictable (see sanitizeApiName in bin/ay-api-gen.js),
+  // so pre-seed node_modules at that exact path to skip the network npm-install step.
+  preventAutoInstall(resolve(tmp, ".ay/apis/tmp-evil-escape"));
+  const { stdout, code } = await runCLI(
+    [spec, "--name", "../../../tmp/evil-escape", "--no-settings"],
+    { cwd: tmp }
+  );
+  assert(code === 0, "T-GEN-2: generate exits 0 even with a path-traversal-attempting --name");
+  assert(!stdout.includes("/../"), "T-GEN-2: no resolved path in the CLI's own output contains an unresolved '..' segment");
+
+  const { existsSync: exists, readdirSync } = await import("node:fs");
+  assert(!exists("/tmp/evil-escape"), "T-GEN-2: --name '../../../tmp/evil-escape' does not escape to /tmp/evil-escape");
+  const apisDir = resolve(tmp, ".ay/apis");
+  assert(exists(apisDir), "T-GEN-2: output landed inside .ay/apis/ as expected");
+  const generatedDirs = readdirSync(apisDir);
+  assert(generatedDirs.every(d => !d.includes("..") && !d.includes("/")), `T-GEN-2: every generated dir name under .ay/apis/ is traversal-free (found: ${generatedDirs.join(",")})`);
+  assert(generatedDirs.some(d => /^tmp-evil-escape$/.test(d)), "T-GEN-2: the traversal attempt was sanitized into a plain directory name (tmp-evil-escape) and kept inside .ay/apis/");
+
+  // The generated package.json's "name" field must be a well-formed, safe
+  // npm package name regardless of how weird the --name input was.
+  const outDir = resolve(apisDir, generatedDirs.find(d => /^tmp-evil-escape$/.test(d)));
+  const pkg = JSON.parse(readFileSync(resolve(outDir, "package.json"), "utf-8"));
+  assert(/^[a-z0-9-]+-mcp$/.test(pkg.name), `T-GEN-2: generated package.json "name" field is a safe, well-formed npm name (got: ${JSON.stringify(pkg.name)})`);
+  assert(pkg.version === "1.0.0" && pkg.type === "module" && pkg.private === true, "T-GEN-2: generated package.json's hardcoded fields are untouched by --name content");
+  assert(Object.keys(pkg.dependencies).length === 1 && pkg.dependencies["@modelcontextprotocol/sdk"] === "1.29.0", "T-GEN-2: generated package.json's dependencies are exactly the expected pinned set — no injected scripts/dependencies entries");
+  assert(!("scripts" in pkg), "T-GEN-2: generated package.json has no scripts field (nothing for npm install to auto-run beyond the declared dependency install)");
+
+  // A spec whose info.title contains characters that would be dangerous in
+  // raw string concatenation (quotes, backslashes, newlines) must still
+  // produce a syntactically valid package.json with a safely-sanitized name
+  // — JSON.stringify() of a real object, not string-built JSON, is what
+  // makes this safe; this proves it end-to-end through the actual CLI.
+  const maliciousSpec = {
+    openapi: "3.0.3",
+    info: { title: 'Evil"};"scripts":{"preinstall":"touch /tmp/pwned_t_gen_2"};//', version: "1.0.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: { "/x": { get: { operationId: "getX", summary: "x", responses: { 200: { description: "ok" } } } } },
+  };
+  const maliciousSpecPath = resolve(tmp, "malicious-spec.json");
+  writeFileSync(maliciousSpecPath, JSON.stringify(maliciousSpec), "utf-8");
+
+  const outDir2 = resolve(tmp, "out-malicious-title");
+  preventAutoInstall(outDir2);
+  const { code: maliciousCode } = await runCLI([maliciousSpecPath, "--output", outDir2, "--no-settings"], { cwd: tmp });
+  assert(maliciousCode === 0, "T-GEN-2: generate exits 0 with a malicious info.title");
+  const pkg2 = JSON.parse(readFileSync(resolve(outDir2, "package.json"), "utf-8")); // throws if not valid JSON
+  assert(pkg2.name.endsWith("-mcp") && /^[a-z0-9-]+$/.test(pkg2.name), `T-GEN-2: malicious info.title cannot inject into package.json's structure — name field stays a clean string (got: ${JSON.stringify(pkg2.name)})`);
+  assert(!("scripts" in pkg2), "T-GEN-2: malicious info.title did not inject a scripts.preinstall entry");
+}
+
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety];
   for (const t of tests) {
     try {
       await t();

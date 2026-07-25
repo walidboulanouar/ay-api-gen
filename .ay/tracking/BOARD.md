@@ -1,6 +1,6 @@
 # Pipeline Board
 
-> Updated 2026-07-25 · branch `ay-framework` · sprints **S1 (security baseline)** and **S2 (hardening + coverage)** both landed
+> Updated 2026-07-25 · branch `ay-framework` · sprints **S1 (security baseline)**, **S2 (hardening + coverage)**, and **S3 (locking + remaining audits + yaml dependency)** all landed
 > Statuses: BACKLOG / READY / IN PROGRESS / BLOCKED / IN REVIEW / DONE
 > See [`../ROADMAP.md`](../ROADMAP.md) for milestone view. See [`../tasks/`](../tasks/) for execution detail.
 
@@ -69,11 +69,22 @@ Source files exist; need integration tests + docs (treated as tech debt — see 
 | S2-02 | Pin exact versions in generated `package.json` (T-GEN-3 / T-SUP-2) | S2 | DONE (S1) for `@modelcontextprotocol/sdk`; CI workflow still unpinned, blocked on Task 17 |
 | S2-03 | Audit every spec-derived interpolation (T-GEN-1) | S2 | DONE | Found + fixed 2 CRITICAL (auth-codegen.js `//`-comment newline injection + backtick/`${}` breakout in generated CLI env docs, present in mcp-generator AND cli-generator since both share auth-codegen.js) + 1 LOW (env-generator.js content spoofing). See HANDOFFS.md 2026-07-25. |
 | S2-04 | Audit `settings-injector.js` for field injection (T-SET-2) | S2 | DONE | No HIGH/CRITICAL found — S1-03's namespacing + bracket-assignment write pattern holds up against path traversal, env injection, prototype pollution. Fixed one functional bug (dead `confirmOverwrite` interactive-prompt path) found along the way. |
-| S2-05 | Replace custom YAML parser with `yaml` (Aro) — after corpus | S3 | Still blocked — corpus now exists (S2-06) but this is a larger dependency-adoption decision, deferred to S3 |
+| S2-05 | Replace custom YAML parser with `yaml` (Aro) — after corpus | S3 | DONE 2026-07-25 | `yaml@2.9.0` exact-pinned, zero transitive deps. `src/yaml-parser.js` now a thin wrapper. Full corpus re-run + new anchor/alias + block-scalar positive tests: 103/103 in `test/run.js`. See ADR-013. |
 | S2-06 | YAML adversarial corpus + test runner | S2 | DONE (scoped) | 13 hand-built adversarial cases + 1 positive round-trip case in `test/run.js`. Not the full external `yaml-test-suite` (would need a network fetch) — a hand-built mini-corpus covering the gotcha classes that matter for OpenAPI YAML. |
 | S2-07 | `ay-api-gen audit --baseline` (T0 free runner) | S2 | DONE | `bin/ay-api-gen.js` — free, no license check, wraps `spec-linter.js`. Supports `--mode=b` + `--accept-risks` for blocking mode, same contract as `generate`. |
 | Gap closure | Extend url-guard.js SSRF/host-rebind protections to `cli-generator.js`'s generated standalone CLI | S2 | DONE | Closes the gap logged in S1's HANDOFFS.md — the generated CLI (`cli.js`) now gets `resolveBaseUrl`/`assertHostAllowed` same as the generated MCP server and `runtime/cli.js`. |
 | 30 | Public API catalog (`serve github`, `serve stripe`) | S3 | - | Curated, signed specs only |
+
+## S3 sprint — locking + remaining threat-model audits (landed 2026-07-25)
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| B-09 | File locking for `settings-injector.js` / `registry.js` read-modify-write | DONE | New `src/file-lock.js` — atomic exclusive-create (`wx`) advisory lock, stale-lock breaking, generous timeout for interactive confirm prompts. Applied to both `injectSettings()` and `registerAPI()`/`unregisterAPI()`. 8 deterministic unit tests (mutual exclusion proven via artificial delay, not racy wall-clock timing) + a 6-process real-CLI concurrency stress test in `test/integration-cli.js`. |
+| T-GEN-2 | `package.json` field injection in generated output | DONE | Traced fully: package.json is built via `JSON.stringify()` of a real object (not string concat), so JSON-structure injection was never actually exploitable — but `--name` bypassed the title's sanitization regex, risking path traversal in the default output dir. Fixed with a single `sanitizeApiName()` applied uniformly to both sources. 13 regression tests. |
+| T-API-3 | Mass-assignment-prone request schema (flagged "future scope" in S1-07's task file) | DONE | New check in `src/spec-linter.js` — flags request-body fields matching privilege/value-sensitive names (`role`, `is_admin`, `balance`, `permissions`, etc.) on mutating endpoints unless explicitly `readOnly: true`. |
+| S2-05 | YAML dependency swap | DONE | See above row and ADR-013. Delegated to a subagent running in parallel with the B-09/T-GEN-2/T-API-3 work above — completed cleanly, zero merge conflicts (scoped to non-overlapping files). |
+
+Note: the user's initial S3 request named "T-GEN-2 (the mass-assignment heuristic)" — checked against the actual `THREAT-MODEL.md` (which lives on the `security-threat-model` branch, not `ay-framework`) and found T-GEN-2 is actually "package.json field injection"; the mass-assignment heuristic is T-API-3. Implemented both rather than guessing which one was meant, since neither conflicted and both were real, previously-unaddressed threats.
 
 ## Backlog — commercial / scale
 

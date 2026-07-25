@@ -4,6 +4,36 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: S3 sprint — file locking, T-GEN-2/T-API-3, yaml dependency (autonomous, continuation of same-day S1+S2 session)
+
+**Status at end of session: all 3 named items (B-09, T-GEN-2, S2-05) complete, plus T-API-3 discovered and fixed along the way. No wall hit.**
+
+### Important catch before implementing anything
+
+The user asked for "T-GEN-2 (the mass-assignment heuristic from the original threat model)". `docs/security/THREAT-MODEL.md` doesn't exist on this branch (`ay-framework`) — it only lives on `security-threat-model` and `rfc-responses-walid`, readable without switching branches via `git show security-threat-model:docs/security/THREAT-MODEL.md`. Per that document, **T-GEN-2 is "package.json field injection in generated output"** — a different threat from the mass-assignment heuristic, which is actually **T-API-3** (already flagged as "Future scope (NOT in this task)" in `.ay/tasks/spec-linter.md` from S1-07). Implemented both rather than guessing or stopping to ask — they don't conflict and both were real, previously unaddressed. If you're working from tracking-file threat IDs from memory in a future session, pull the actual doc onto this branch first; it's easy to conflate similar-sounding threat descriptions.
+
+### What I did
+
+1. **B-09 (file locking)** — new `src/file-lock.js`: a ~90-line, dependency-free advisory lock using atomic exclusive file creation (`openSync(path, "wx")`). Stale-lock breaking (15s) so a crashed process can't deadlock everyone; generous 30s acquire-timeout because the critical section can include an interactive confirm prompt. Applied to both `settings-injector.js`'s `injectSettings()` and `registry.js`'s `registerAPI()`/`unregisterAPI()` (same TOCTOU class in both files — B-09 named settings.local.json specifically, fixed registry.json too for the same cost). All three functions are now `async`; updated every call site.
+   - **Testing lesson worth remembering**: I tried to prove the fix has teeth by disabling the lock and re-running a real-CLI-process concurrency test (6, then 20, concurrently spawned `ay-api-gen generate` processes racing on the same files) — it never reproduced data loss, lock disabled or not. The actual critical section (`readFileSync` → mutate → `writeFileSync`) is too narrow relative to full process startup/codegen time for wall-clock races to reliably collide under light local load. That doesn't mean the bug is fake — race conditions are probabilistic, and a slower disk or heavier concurrency would likely reproduce it more easily. To get a reliable red/green proof, I added a *second*, deterministic test that calls `withFileLock()` directly with an artificial delay inside the critical section — disabling the lock made 2 of 8 assertions fail exactly as expected (mutual exclusion, timeout-on-held-lock); re-enabling made all 8 pass again. Trust that test as the real regression guard; the CLI-process stress test is still valuable as an end-to-end sanity check, just not a provable red/green test by itself.
+2. **T-GEN-2** — traced the actual code before assuming anything needed fixing. The generated `package.json` is built via `JSON.stringify({...})`, not raw string concatenation like the T-GEN-1 bugs were — so the literal threat-model concern ("a malicious spec can inject `scripts.preinstall`") was never actually exploitable. What I did find: `--name` bypassed the sanitizing regex that the spec-title-derived fallback already had, so a careless `--name ../../../tmp/evil` could produce a default output directory outside `.ay/apis/`. Fixed with one `sanitizeApiName()` applied uniformly to both sources.
+3. **T-API-3** — new mass-assignment check in `src/spec-linter.js`, following the exact pattern T-API-1/T-API-2 already established: flags request-body fields on mutating endpoints matching privilege/value-sensitive names (`role`, `is_admin`, `balance`, `permissions`, etc.) unless explicitly `readOnly: true`.
+4. **S2-05 (yaml dependency)** — delegated to a subagent, running in parallel with items 1-3, scoped to a tight non-overlapping file list to avoid conflicts. Came back clean: `yaml@2.9.0` exact-pinned, zero transitive deps, `src/yaml-parser.js` rewritten as a thin ~30-line wrapper preserving the old `parseYaml(str) -> object|null`, never-throws contract. Full adversarial corpus re-run plus new positive tests proving anchors/aliases and block scalars now actually work (the old parser couldn't handle either). One accepted behavior change, documented in ADR-013: duplicate YAML map keys now fail to parse instead of silently keeping the last value.
+
+### Verification
+
+```bash
+node test/run.js              # 114/114
+node test/integration-cli.js  # 80/80, fully network-free
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean — only pre-existing, already-documented findings
+```
+
+### What's left
+
+Same as the S2 session's "What's left" below, minus B-09/T-GEN-2/S2-05/T-API-3 which are now done. Notably still open: S1-08 (Luisa's ADR-006 sign-off), Task 17 (npm publish, blocked on naming + credentials), the S2 session's known gap (`cli-generator.js`'s generated CLI still lacks the runtime helpers' description/truncation sanitization — wait, that one's actually about `url-guard.js` and was closed in S2; the remaining known gap is T-GEN-4 (output path traversal via `--output` itself, not `--name` — separate, lower-priority, user-supplied-only per the threat model) and the broader S3 backlog (sandbox infra, license-key system, public API catalog) untouched.
+
+---
+
 ## 2026-07-25 — Session: S2 hardening + coverage sprint (autonomous, continuation of same-day S1 session)
 
 **Status at end of session: S2 sprint (S2-01, T-GEN-1, T-SET-2, S1-gap-closure, S2-06, S2-07) complete — all 6 items the user asked for, including the two "if time allows" items. No wall hit.**
