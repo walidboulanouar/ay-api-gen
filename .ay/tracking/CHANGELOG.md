@@ -43,6 +43,7 @@
 - Added T-API-6 (no declared rate limiting) to `spec-linter.js` — one spec-wide LOW finding when no endpoint anywhere declares a 429 response or a `RateLimit-*`/`X-RateLimit-*` header. `parser.js` now derives `hasRateLimitSignal` per endpoint.
 - Verified (no code change needed) T-GEN-3/T-SUP-2: the generated `package.json` template already exact-pins `@modelcontextprotocol/sdk`, no floating ranges.
 - Updated `README.md`'s Security section to document the new spec-size cap and the T-API-6 lint check.
+- Positively audited T-ING-4 (custom YAML parser RCE/DoS risk), never actually re-verified since S3's migration off the hand-rolled parser onto the real `yaml` package. Confirmed empirically (not inferred): the alias-bomb (`maxAliasCount`) DoS guard actually fires, YAML merge keys aren't auto-expanded (forecloses a merge-key prototype-pollution vector), and a literal `__proto__` map key doesn't touch the real `Object.prototype`. 6 new regression tests in `test/run.js`.
 
 ## [0.1.1] — 2026-05-11
 
