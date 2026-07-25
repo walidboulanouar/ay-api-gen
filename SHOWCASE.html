@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ay-api-gen — Overnight Session Showcase</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e0e0e8; line-height: 1.6; padding: 2rem; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.25rem; color: #fff; }
+  .subtitle { color: #888; font-size: 0.95rem; margin-bottom: 1.75rem; }
+  h2 { font-size: 1.3rem; font-weight: 600; color: #fff; margin: 2.5rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1e1e2e; }
+  h3 { font-size: 1rem; font-weight: 600; color: #ccc; margin: 1.5rem 0 0.5rem; }
+
+  .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+  .card-header .name { font-weight: 600; font-size: 1.05rem; color: #fff; }
+  .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge-connected { background: #0d3320; color: #4ade80; border: 1px solid #166534; }
+  .badge-missing { background: #3b1219; color: #f87171; border: 1px solid #7f1d1d; }
+  .badge-optional { background: #1e1b34; color: #a78bfa; border: 1px solid #3b3266; }
+  .badge-warn { background: #3b2a12; color: #fbbf24; border: 1px solid #7f5f1d; }
+
+  .field { display: grid; grid-template-columns: 150px 1fr; gap: 0.25rem 1rem; margin-bottom: 0.35rem; font-size: 0.9rem; }
+  .field .label { color: #666; }
+  .field .value { color: #ccc; }
+
+  code, .code { font-family: 'SF Mono', 'Fira Code', monospace; background: #1a1a28; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #a78bfa; }
+  pre { background: #1a1a28; border: 1px solid #1e1e2e; border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: 0.83rem; color: #ccc; margin: 0.5rem 0; font-family: 'SF Mono', 'Fira Code', monospace; }
+
+  a { color: #60a5fa; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .section-note { background: #1a1a28; border-left: 3px solid #60a5fa; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; font-size: 0.9rem; color: #999; }
+  .section-note.evidence { border-left-color: #4ade80; }
+  .section-note.warn { border-left-color: #fbbf24; }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; }
+  @media (max-width: 700px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+  .summary-card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 10px; padding: 1rem; text-align: center; }
+  .summary-card .num { font-size: 2rem; font-weight: 700; color: #fff; }
+  .summary-card .label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .nav { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 2rem; }
+  .nav a { background: #12121a; border: 1px solid #1e1e2e; color: #999; font-size: 0.78rem; padding: 0.4rem 0.8rem; border-radius: 99px; }
+  .nav a:hover { border-color: #3b3266; color: #a78bfa; text-decoration: none; }
+
+  .session-card { border-left: 3px solid #3b3266; }
+  .session-title { font-weight: 700; color: #fff; font-size: 1rem; margin-bottom: 0.15rem; }
+  .session-meta { color: #666; font-size: 0.78rem; margin-bottom: 0.75rem; }
+  .bug-tag { display: inline-block; background: #3b1219; color: #f87171; border: 1px solid #7f1d1d; font-size: 0.68rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-right: 0.35rem; letter-spacing: 0.3px; }
+  .ship-tag { display: inline-block; background: #0d3320; color: #4ade80; border: 1px solid #166534; font-size: 0.68rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-right: 0.35rem; letter-spacing: 0.3px; }
+  ul.tight { margin-left: 1.2rem; margin-top: 0.4rem; font-size: 0.9rem; color: #ccc; }
+  ul.tight li { margin-bottom: 0.4rem; }
+  ul.tight li b { color: #fff; }
+
+  .gap-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.87rem; }
+  .gap-table th { text-align: left; padding: 0.5rem 0.6rem; color: #666; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid #1e1e2e; }
+  .gap-table td { padding: 0.55rem 0.6rem; border-bottom: 1px solid #1a1a28; color: #ccc; vertical-align: top; }
+  .gap-table tr:last-child td { border-bottom: none; }
+
+  .checklist-step { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 1.1rem 1.4rem; margin-bottom: 1rem; position: relative; }
+  .checklist-step .step-num { position: absolute; top: -12px; left: -12px; width: 30px; height: 30px; border-radius: 50%; background: #1e1b34; color: #a78bfa; border: 1px solid #3b3266; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; }
+  .checklist-step .step-title { font-weight: 700; color: #fff; font-size: 1rem; margin-bottom: 0.3rem; margin-left: 0.5rem; }
+  .checklist-step .step-body { margin-left: 0.5rem; font-size: 0.88rem; color: #ccc; }
+  .checklist-step .step-body .field { grid-template-columns: 110px 1fr; }
+
+  .flag-blocked { color: #f87171; font-weight: 600; }
+  .flag-optional { color: #a78bfa; font-weight: 600; }
+  .flag-ready { color: #4ade80; font-weight: 600; }
+
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #1e1e2e; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>ay-api-gen</h1>
+<p class="subtitle">Overnight Session Showcase — read cold, top to bottom &mdash; generated 2026-07-25</p>
+
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="num">7</div>
+    <div class="label">Sessions Tonight</div>
+  </div>
+  <div class="summary-card">
+    <div class="num">151 / 119</div>
+    <div class="label">Unit / Integration Tests</div>
+  </div>
+  <div class="summary-card">
+    <div class="num">2</div>
+    <div class="label">Competitor CVEs Found</div>
+  </div>
+  <div class="summary-card">
+    <div class="num">0</div>
+    <div class="label">New Creds Introduced</div>
+  </div>
+</div>
+
+<div class="nav">
+  <a href="#built">① What got built tonight</a>
+  <a href="#gaps">② Competitive gap analysis</a>
+  <a href="#checklist">③ Launch provisioning checklist</a>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="built">① What Actually Got Built / Fixed Tonight</h2>
+<p style="color:#999; font-size:0.9rem; margin-bottom:1rem;">Chronological, oldest first. Every item below shipped with real regression tests — no stubs, no TODOs left behind. Full detail in <code>PROGRESS-LOG.md</code>; this is the substance, condensed.</p>
+
+<div class="card session-card">
+  <div class="session-title">Session 1 — S1 security-baseline sprint</div>
+  <div class="session-meta">7 tasks (S1-01…S1-07) · 38 new offline tests · commit <code>1aa9748</code></div>
+  <ul class="tight">
+    <li><span class="ship-tag">SHIPPED</span> Fixed JSDoc/template-literal injection (T-ING-1) in both generators, private-IP/metadata SSRF deny-list (T-ING-2), settings-namespace collision protection (T-SET-1), 500-char description sanitization (T-RUN-3), same-host base-URL guard (T-RUN-1), and the first version of <code>spec-linter.js</code> (T-API-1/T-API-2).</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> A <b>second</b>, undocumented injection: raw <code>info.title</code> could break out of a generated template literal in the CLI's <code>printHelp()</code> via backtick/<code>${}</code> — not in the original task spec, found while fixing the first one.</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> A latent crash in <code>truncateResponse()</code>'s oversized-object path (invalid JSON reconstruction) — dead code until this session wired it live into every generated server.</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> IPv6 SSRF bypass: <code>new URL().hostname</code> keeps brackets around IPv6 literals, so <code>net.isIPv6()</code> silently failed and <code>http://[::1]/</code> sailed straight through the private-IP guard, unblocked.</li>
+  </ul>
+</div>
+
+<div class="card session-card">
+  <div class="session-title">Session 2 — S2 hardening + coverage sprint</div>
+  <div class="session-meta">2 parallel security audits (forked subagents) + 50 new CLI integration tests · commit <code>d237548</code></div>
+  <ul class="tight">
+    <li><span class="bug-tag">BUG CAUGHT</span> The <b>same</b> injection class from S1 was still live in <code>auth-codegen.js</code> — shared by both generators, missed because S1 only audited the two generator files directly, not the shared helper. Fixed with new <code>safeLineComment()</code>/<code>safeTemplateText()</code> helpers.</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> The interactive <code>confirmOverwrite</code> settings prompt was dead code — an unawaited async confirm is always truthy, so it silently bypassed the prompt every time. Fixed by making <code>injectSettings()</code> properly <code>async</code>.</li>
+    <li><span class="ship-tag">SHIPPED</span> Closed the known S1 gap: the generated standalone CLI now gets the same SSRF/host-rebind guard as the MCP server. Verified live against a <code>169.254.169.254</code> cloud-metadata fixture.</li>
+    <li><span class="ship-tag">SHIPPED</span> <code>test/integration-cli.js</code> (50 tests, real child-process spawns — previously 0% integration coverage on doctor/init/discover/diff/slim/filter). <code>ay-api-gen audit --baseline</code> (free T0 lint, no license check). 13-case hand-built YAML adversarial corpus.</li>
+  </ul>
+</div>
+
+<div class="card session-card">
+  <div class="session-title">Session 3 — file locking, mass-assignment check, real YAML dependency</div>
+  <div class="session-meta">B-09, T-GEN-2, T-API-3, S2-05 · commit <code>c071ef0</code></div>
+  <ul class="tight">
+    <li><span class="ship-tag">SHIPPED</span> <code>src/file-lock.js</code> — dependency-free advisory lock (atomic exclusive file creation), applied to both <code>settings.local.json</code> and <code>registry.json</code> writes, closing a real read-modify-write race (B-09).</li>
+    <li><b>Caught its own false negative:</b> a 20-process concurrent-CLI stress test never reproduced the race (critical section too narrow relative to full process startup to collide reliably) — rather than declare it fixed on a test that couldn't fail, added a second deterministic test with an artificial delay inside the critical section, which failed 2/8 assertions with the lock disabled and passed all 8 with it enabled.</li>
+    <li><span class="ship-tag">SHIPPED</span> T-API-3 (mass-assignment heuristic) in <code>spec-linter.js</code>; fixed <code>--name</code> bypassing path-traversal sanitization that the spec-derived default already had (T-GEN-2). Replaced the hand-rolled YAML parser with real <code>yaml@2.9.0</code> (zero transitive deps, exact-pinned) — anchors/aliases and block scalars now actually work.</li>
+  </ul>
+</div>
+
+<div class="card session-card">
+  <div class="session-title">Session 4 — output-path safety, full backlog survey, caching + rate limiting</div>
+  <div class="session-meta">T-GEN-4, items 23 &amp; 24 · commit <code>d54337b</code></div>
+  <ul class="tight">
+    <li><span class="ship-tag">SHIPPED</span> Two-tier deny-list for <code>--output</code> path traversal (T-GEN-4): system directories refused outright, bare home/root refused on exact match only, everything else outside cwd allowed with a warning.</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> The first version of the deny-list included <code>/var</code> — which looks like a system directory but is where macOS's own <code>os.tmpdir()</code> lives, so it would have broken ordinary <code>--output /tmp/...</code> usage including this project's own tests. Caught because unrelated tests started failing.</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> The <code>init</code> wizard's <code>.env</code> pre-write used a separate, unsanitized copy of <code>config.name</code> — meaning <code>.env</code> and the generated server could land in different directories. Routed both through one <code>sanitizeApiName()</code>.</li>
+    <li><span class="ship-tag">SHIPPED</span> Full survey of the remaining backlog (items 19–24, C-01…C-07) — every item's block reason documented in <code>BOARD.md</code>, none guessed at. Shipped the two that were fully engineering-scoped: opt-in response caching (<code>AY_CACHE_TTL_MS</code>) and rate limiting (<code>AY_RATE_LIMIT_RPS</code>) in <code>runtime/mcp-server.js</code>, verified via a real MCP client/server protocol roundtrip, not just unit tests.</li>
+  </ul>
+</div>
+
+<div class="card session-card">
+  <div class="session-title">Session 5 — OpenAPI 3.1 full support (item 19)</div>
+  <div class="session-meta">The one backlog item that turned out fully unblocked · commit <code>a7d4ef2</code></div>
+  <ul class="tight">
+    <li><span class="bug-tag">BUG CAUGHT — the real one</span> OpenAPI 3.1 represents nullable fields as <code>type: ["string","null"]</code> instead of 3.0's <code>nullable: true</code>. Every <code>switch(schema.type)</code> in the codebase (3 separate sites) silently fell through to the wrong Zod type on an array-valued <code>type</code> — every nullable field in a 3.1-native spec was quietly mistyped. Fixed once, at the source (<code>parser.js</code>'s <code>buildSchema()</code>), so none of the 3 consuming sites needed touching.</li>
+    <li><span class="ship-tag">SHIPPED</span> <code>components.pathItems</code> and <code>webhooks</code> <code>$ref</code> resolution — a <code>$ref</code>'d path was previously silently dropped (zero endpoints, no error). Parsed <code>webhooks</code> structurally but deliberately did <b>not</b> turn them into callable tools — confirmed this is spec-semantically correct (webhooks are inbound, the reverse direction of everything <code>paths</code> describes), not a punt.</li>
+    <li>Verified with teeth: temporarily reverted the nullable fix and got the exact predicted Zod rejection (<code>expected string, received null</code>) over a real MCP protocol roundtrip before restoring it.</li>
+  </ul>
+</div>
+
+<div class="card session-card">
+  <div class="session-title">Session 6 — competitive gap analysis + 2 gaps closed</div>
+  <div class="session-meta">5 parallel research subagents, public web only · commit <code>9ad8279</code> · full detail in §2 below</div>
+  <ul class="tight">
+    <li><span class="ship-tag">SHIPPED</span> <code>GAP-ANALYSIS.md</code> — 5 real competitors researched, evidence-cited, honest in both directions.</li>
+    <li><span class="ship-tag">SHIPPED</span> T-API-4 (sensitive query param) + T-API-5 (weak/no global auth scheme) added to <code>spec-linter.js</code>. StreamableHTTP transport for <code>serve --transport http</code> — localhost-default, loud warning to bind wider.</li>
+    <li><span class="bug-tag">BUG CAUGHT</span> The MCP SDK's documented "stateless" HTTP mode 500s on the <code>notifications/initialized</code> message every real MCP session sends right after <code>initialize</code> — found via a real client/server protocol roundtrip, not a syntax check. Switched to stateful mode (session ID per connection).</li>
+  </ul>
+</div>
+
+<div class="card session-card">
+  <div class="session-title">Session 7 — visual artifacts</div>
+  <div class="session-meta">commits <code>ff5d0aa</code>, this document</div>
+  <ul class="tight">
+    <li><span class="ship-tag">SHIPPED</span> <code>APP-MOCKUP.html</code> — terminal-style walkthrough of the real product flow (init → parse → generate → tool list an LLM sees → audit output).</li>
+    <li><span class="ship-tag">SHIPPED</span> This document.</li>
+  </ul>
+</div>
+
+<div class="section-note">
+  <b>Net effect for tonight:</b> every S1–S3 security threat that was concretely engineering-scoped is now closed, OpenAPI 3.1 is fully supported, two competitor-informed gaps (spec-linter depth, a second transport) are closed, and the project now has 151 unit + 119 integration tests, none of them network-dependent except the historical Petstore-fetch tests. Everything genuinely still open needs either a human decision or real infrastructure — see §3.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="gaps">② Competitive Gap Analysis</h2>
+<p style="color:#999; font-size:0.9rem; margin-bottom:1rem;">Full sourcing and citations in <code>GAP-ANALYSIS.md</code>. 5 competitors researched via public web only (no signups, no authenticated scraping): Speakeasy/Gram, FastMCP, <code>openapi-mcp-generator</code>, DigitalAPI, <code>cnoe-io/openapi-mcp-codegen</code>.</p>
+
+<div class="section-note evidence">
+  <b>The headline finding.</b> Two of the five competitors have real, disclosed, patched vulnerabilities in exactly the classes of bug this project hardened against <i>before</i> shipping:
+  <ul class="tight">
+    <li><b>FastMCP</b> — CVE-2026-32871 / GHSA-vv7q-7jx5-f767: unencoded path-parameter substitution let <code>../</code> escape the intended API prefix — an <b>authenticated SSRF</b> (the forged request still carried the configured auth headers).</li>
+    <li><b><code>openapi-mcp-generator</code></b> — issue #68 (SSRF via uncontrolled external <code>$ref</code> resolution) and issue #67 (template-literal injection via unsanitized <code>description</code> fields that could leak <code>process.env</code> to MCP clients — structurally the <i>identical</i> class to this project's own T-ING-1/T-GEN-1 fixes). Their own SSRF fix <b>regressed within the same week</b> (#70), needing an emergency point release.</li>
+  </ul>
+  This turns "we have SSRF guards and injection-safe codegen" into a citable, factual claim, not a feature-list assertion: two direct competitors shipped exactly these bugs to production; we caught and fixed the same classes with regression tests before ever shipping.
+</div>
+
+<table class="gap-table">
+  <thead><tr><th style="width:32%">Gap</th><th>Disposition</th></tr></thead>
+  <tbody>
+    <tr><td><b>Alternative transports</b> (stdio-only)</td><td><span class="flag-ready">CLOSED tonight</span> — StreamableHTTP added to <code>serve --transport http</code>, localhost-default.</td></tr>
+    <tr><td><b>Spec-lint depth</b> (T-API-4/5)</td><td><span class="flag-ready">CLOSED tonight</span> — both checks were already scoped in the threat model, just unimplemented.</td></tr>
+    <tr><td><b>Hosted/managed MCP serving</b> (Gram/DigitalAPI's core product)</td><td><span class="flag-blocked">DEFERRED — needs real infra</span> — server/DNS/TLS/uptime story, a business decision, not just code. See checklist §3.</td></tr>
+    <tr><td><b>Interactive OAuth 2.1 PKCE + Dynamic Client Registration</b></td><td><span class="flag-blocked">DEFERRED — needs a live OAuth provider</span> to build and verify a real browser-redirect round trip. See checklist §3.</td></tr>
+    <tr><td><b>Multi-tool workflow composition</b> (Gram-style)</td><td><span class="flag-optional">DEFERRED — real design work</span>, bigger than a same-night add-on; needs a workflow DSL decision.</td></tr>
+    <tr><td><b>LLM-assisted description rewriting</b> (<code>cnoe-io</code>'s <code>--enhance-docstring-with-llm</code>)</td><td>Deliberate non-goal, not a gap — every character in a tool description is prompt-injection surface (T-RUN-3); we cap/sanitize, they expand. Documented as a philosophical difference.</td></tr>
+    <tr><td><b>Enterprise governance UX</b> (RBAC, SSO, SIEM export)</td><td>Real gap, fundamentally a hosted-service feature category — same infra blocker as managed serving above.</td></tr>
+  </tbody>
+</table>
+
+<h3>What we already do better (evidence-backed, not just claimed)</h3>
+<ul class="tight">
+  <li>Minimal dependency footprint — exactly 2 packages (<code>@modelcontextprotocol/sdk</code>, <code>yaml</code>), both exact-pinned, vs. competitors pulling in 4+ packages or a full Python/TS toolchain.</li>
+  <li>The only fully transparent, zero-signup, zero-cost security tool in the category — <code>audit --baseline</code> runs locally, no account, source-available end to end. Every other competitor's pricing is now enterprise-contact-only or behind an auth wall.</li>
+  <li>Reverse generation (MCP tools → OpenAPI) — FastMCP explicitly lacks this (their own open issue #4107).</li>
+  <li>File locking and settings-namespace collision protection — not mentioned in any of the five competitors' docs or source.</li>
+  <li>Full OpenAPI 3.1 handling with real regression coverage — FastMCP's own tracker shows a user-reported breakage on exactly the 3.0/3.1 schema-shape mismatch this project specifically tests for.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="checklist">③ Launch Provisioning Checklist</h2>
+<p style="color:#999; font-size:0.9rem; margin-bottom:1.5rem;">Consolidated and de-duplicated from <code>HUMAN-SETUP-NEEDED.md</code>, <code>.ay/tracking/BLOCKERS.md</code>, and <code>DECISIONS.md</code>. Ordered the way a human would actually work through it — decisions first (they gate everything downstream), then credentials, then infrastructure. Nothing below was built or guessed at tonight; each item genuinely needs a human call or a live credential this sandbox can't provision.</p>
+
+<div class="checklist-step">
+  <span class="step-num">1</span>
+  <div class="step-title">Decide the product name <span class="flag-blocked">BLOCKING</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">Blocks</span><span class="value">npm publish (everything else in this checklist waits on this)</span></div>
+    <div class="field"><span class="label">Who decides</span><span class="value">Walid + Luisa</span></div>
+    <div class="field"><span class="label">Criteria</span><span class="value">Maps to the 3-tier security narrative; usable as a verb in docs; not generic in the security-tooling space; liwala org buy-in (ADR-009)</span></div>
+    <div class="field"><span class="label">Status</span><span class="value">Target date 2026-06-01 already passed — worth a nudge. Candidates on the table: <code>ay-api-gen</code> (current), <code>safeapi2mcp</code>, <code>gauntlet</code>, <code>ay-vet</code>.</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">2</span>
+  <div class="step-title"><code>npm login</code> credentials <span class="flag-blocked">BLOCKING</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">Publishing the package interactively / setting up the automation token below</span></div>
+    <div class="field"><span class="label">Where to get it</span><span class="value">Run <code>npm login</code> locally with Walid's npm account (create one at <a href="https://www.npmjs.com/signup">npmjs.com/signup</a> if it doesn't exist yet)</span></div>
+    <div class="field"><span class="label">Do this after</span><span class="value">Step 1 — don't publish under a name that might change</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">3</span>
+  <div class="step-title"><code>NPM_TOKEN</code> — GitHub Actions secret</div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value"><code>.github/workflows/release.yml</code>, used as <code>NODE_AUTH_TOKEN</code> to publish on release</span></div>
+    <div class="field"><span class="label">Where to get it</span><span class="value">npmjs.com → account settings → Access Tokens → generate an "Automation" token</span></div>
+    <div class="field"><span class="label">Where it goes</span><span class="value">GitHub repo → Settings → Secrets and variables → Actions → new secret named <code>NPM_TOKEN</code></span></div>
+    <div class="field"><span class="label">Do this after</span><span class="value">Steps 1–2 — renaming a published package is painful, don't set this up early</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">4</span>
+  <div class="step-title">Luisa's ADR-006 sign-off <span class="flag-optional">NOT BLOCKING PUBLISH</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">Formally flipping ADR-006 (the 3-tier security pipeline RFC) from "Proposed" to "Accepted"</span></div>
+    <div class="field"><span class="label">Status</span><span class="value">All 4 preconditions the ADR names are now met (S1–S3 fixes landed 2026-07-25) — this is a review pass, not new work, and it's Luisa's call to make, not an engineering task</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">5</span>
+  <div class="step-title">Live OAuth 2.1 test provider (PKCE + DCR) <span class="flag-optional">OPTIONAL — feature-gated</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">Building interactive browser-redirect OAuth login — currently only <code>client_credentials</code> is automated</span></div>
+    <div class="field"><span class="label">What's needed</span><span class="value">A free-tier <a href="https://auth0.com">Auth0</a> or <a href="https://www.okta.com">Okta</a> dev tenant (supports PKCE + Dynamic Client Registration), or a self-hosted <code>oauth2-mock-server</code>-style test IdP for local verification</span></div>
+    <div class="field"><span class="label">Why it's needed</span><span class="value">A PKCE/DCR flow needs a real redirect and real client registration to verify against — can't be built correctly from reading the spec alone</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">6</span>
+  <div class="step-title">Hosting decision + infra for managed MCP serving <span class="flag-optional">OPTIONAL — new product surface</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">Matching Gram/DigitalAPI's "we host your generated MCP server" offering</span></div>
+    <div class="field"><span class="label">Decide first</span><span class="value">Hosting model — self-managed VPS/container platform vs. serverless vs. partnering with an existing MCP-hosting provider (a product/business call, not engineering)</span></div>
+    <div class="field"><span class="label">Then needs</span><span class="value">A deployment target, DNS, TLS certs, and an uptime/ops story — real infra credentials once the model is picked</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">7</span>
+  <div class="step-title">Licensing/tier model decision (C-04) <span class="flag-blocked">BLOCKS everything commercial</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">Gating T1/T2 paid features — license format, verification method, and issuing server are all currently undecided anywhere in the tracking docs</span></div>
+    <div class="field"><span class="label">Blocks</span><span class="value">C-01 (Fargate sandbox), C-02 (spec-gating UX), C-03 (red-team harness), C-05 (Stripe billing), C-06 (customer-owned-API mode)</span></div>
+    <div class="field"><span class="label">Who decides</span><span class="value">Product decision — not something engineering can resolve by building more</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">8</span>
+  <div class="step-title">AWS account + Fargate — T1 sandbox infra <span class="flag-optional">OPTIONAL — paid tier only</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">C-01/C-03 — the sandboxed Claude-agent runner for the paid security-audit tiers (ADR-011)</span></div>
+    <div class="field"><span class="label">Where to get it</span><span class="value">AWS account → IAM credentials scoped to ECS/Fargate → store as GitHub Actions / deploy secrets, not committed</span></div>
+    <div class="field"><span class="label">Do this after</span><span class="value">Step 7 — there's no tier to gate this behind yet</span></div>
+  </div>
+</div>
+
+<div class="checklist-step">
+  <span class="step-num">9</span>
+  <div class="step-title">Stripe account — billing (C-05) <span class="flag-optional">OPTIONAL — paid tier only</span></div>
+  <div class="step-body">
+    <div class="field"><span class="label">For</span><span class="value">Pricing page + billing integration once tier definitions exist</span></div>
+    <div class="field"><span class="label">Where to get it</span><span class="value"><a href="https://dashboard.stripe.com/register">dashboard.stripe.com/register</a> → API keys under Developers → API keys</span></div>
+    <div class="field"><span class="label">Do this after</span><span class="value">Step 7 — explicitly depends on the tier model, not just the credential</span></div>
+  </div>
+</div>
+
+<div class="section-note warn">
+  <b>Database / migrations:</b> none. This project has no database of its own — <code>registry.json</code> and <code>settings.local.json</code> are the only persisted state, both flat local JSON files with the file-locking added tonight (Session 3). A database only enters the picture if/when the managed hosting product (step 6) or a license-verification server (step 7) gets built — neither exists yet, so there is nothing to migrate today.
+</div>
+<div class="section-note">
+  <b>What does <i>not</i> need provisioning:</b> everything shipped in Sessions 1–7 above is local static analysis, codegen, and one new public npm dependency (<code>yaml@2.9.0</code>, no auth to install). No new external service, API key, or credential was introduced by tonight's work. Generated MCP servers/CLIs need their <i>own</i> per-API credentials (<code>API_KEY</code>, bearer tokens, etc.), but those are supplied by whoever runs <code>ay-api-gen</code> against a given spec — already documented per-API in each generated <code>.env.example</code>, not something this project's maintainers provision.
+</div>
+
+<footer>
+  Generated for Walid's morning review &mdash; ay-api-gen, 2026-07-25 &mdash; sources: PROGRESS-LOG.md, GAP-ANALYSIS.md, HUMAN-SETUP-NEEDED.md, .ay/tracking/BLOCKERS.md &amp; DECISIONS.md, git log
+</footer>
+
+</body>
+</html>
