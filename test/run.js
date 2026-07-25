@@ -292,12 +292,14 @@ async function testSecurityHardening() {
   } catch (e) { deniedByAsyncConfirm = /Aborted/.test(e.message); }
   assert(deniedByAsyncConfirm, "T-SET-2: async confirmOverwrite returning false is awaited and still aborts (not treated as truthy Promise)");
 
-  // T-API-1 / T-API-2 / T-API-3: spec-linter
+  // T-API-1 / T-API-2 / T-API-3 / T-API-4 / T-API-5: spec-linter
   const dirtySpec = {
+    baseUrl: "https://8.8.8.8",
     info: {}, securitySchemes: {}, endpoints: [
       { method: "POST", path: "/charge", security: [], parameters: [] },
       { method: "GET", path: "/pets", security: [], parameters: [] },
       { method: "GET", path: "/users/{ssn}/profile", security: [], parameters: [{ name: "ssn", in: "path" }] },
+      { method: "GET", path: "/search", security: [], parameters: [{ name: "api_key", in: "query" }, { name: "q", in: "query" }] },
       {
         method: "PUT", path: "/user", security: [], parameters: [],
         requestBody: { schema: { properties: {
@@ -315,8 +317,12 @@ async function testSecurityHardening() {
   assert(findings.some(f => f.id === "T-API-3" && f.message.includes("is_admin")), "T-API-3: fires on a writable is_admin request-body field");
   assert(!findings.some(f => f.id === "T-API-3" && f.message.includes("balance")), "T-API-3: does not fire on a field explicitly marked readOnly");
   assert(!findings.some(f => f.id === "T-API-3" && f.message.includes('"name"')), "T-API-3: does not fire on an ordinary, non-privilege field name");
+  assert(findings.some(f => f.id === "T-API-4" && f.message.includes("api_key") && f.endpoint === "GET /search"), "T-API-4: fires on sensitive query param");
+  assert(!findings.some(f => f.id === "T-API-4" && f.message.includes('"q"')), "T-API-4: does not fire on an ordinary, non-sensitive query param");
+  assert(findings.some(f => f.id === "T-API-5" && f.severity === "low" && f.message.includes("No security schemes")), "T-API-5: fires (low) when zero security schemes are declared anywhere in the spec");
 
   const cleanSpec = {
+    baseUrl: "https://8.8.8.8",
     info: {}, securitySchemes: { bearer: { type: "http", scheme: "bearer" } }, endpoints: [
       { method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [] },
       {
@@ -326,6 +332,30 @@ async function testSecurityHardening() {
     ],
   };
   assert(lintSpec(cleanSpec).length === 0, "spec-linter: clean spec (incl. a readOnly role field) produces no findings");
+
+  // T-API-5: basic auth as the only scheme, over plaintext http:// — the
+  // one case severe enough to be "high" (credentials are base64-encoded,
+  // not encrypted, so this is real cleartext credential exposure).
+  const basicOverHttpSpec = {
+    baseUrl: "http://api.example.com",
+    info: {}, securitySchemes: { basicAuth: { type: "http", scheme: "basic" } },
+    endpoints: [{ method: "GET", path: "/pets", security: [{ basicAuth: [] }], parameters: [] }],
+  };
+  const basicOverHttpFindings = lintSpec(basicOverHttpSpec);
+  assert(basicOverHttpFindings.some(f => f.id === "T-API-5" && f.severity === "high" && f.message.includes("http://")), "T-API-5: fires (high) when the only scheme is HTTP Basic over plaintext http://");
+
+  // Same scheme, but https:// — must NOT fire (the scheme itself is fine, it's the plaintext transport that's the problem).
+  const basicOverHttpsSpec = { ...basicOverHttpSpec, baseUrl: "https://api.example.com" };
+  assert(!lintSpec(basicOverHttpsSpec).some(f => f.id === "T-API-5"), "T-API-5: does not fire when HTTP Basic is used over https://");
+
+  // Bearer-only over http:// must NOT fire the basic-auth-specific sub-check (bearer tokens aren't base64-reversible credentials the same way).
+  const bearerOverHttpSpec = {
+    baseUrl: "http://api.example.com",
+    info: {}, securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    endpoints: [{ method: "GET", path: "/pets", security: [{ bearer: [] }], parameters: [] }],
+  };
+  assert(!lintSpec(bearerOverHttpSpec).some(f => f.id === "T-API-5"), "T-API-5: does not fire for a non-basic scheme over http:// (only the basic-auth-over-plaintext combination is flagged)");
+
   assert(parseAcceptRisks("T-API-1:POST_charge").has("T-API-1:POST_charge"), "spec-linter: parseAcceptRisks parses comma-separated list");
 }
 

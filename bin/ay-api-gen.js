@@ -57,6 +57,12 @@ function parseArgs(argv) {
       opts.mode = argv[++i];
     } else if (arg === "--baseline") {
       opts.baseline = true;
+    } else if (arg === "--transport") {
+      opts.transport = argv[++i];
+    } else if (arg === "--port") {
+      opts.port = argv[++i];
+    } else if (arg === "--host") {
+      opts.host = argv[++i];
     } else if (!arg.startsWith("-")) {
       opts.positional.push(arg);
     }
@@ -72,7 +78,7 @@ COMMANDS
   ay-api-gen <spec-url-or-file> [options]     Generate MCP server + CLI
   ay-api-gen init                              Interactive setup wizard
   ay-api-gen discover <domain>                 Auto-find OpenAPI specs on a domain
-  ay-api-gen serve <spec>                      Start MCP server directly (no codegen)
+  ay-api-gen serve <spec> [--transport http]   Start MCP server directly (no codegen)
   ay-api-gen run <spec> <resource> <action>    Call API directly (no codegen)
   ay-api-gen list                              List all generated APIs
   ay-api-gen doctor                            Health check all registered APIs
@@ -98,6 +104,10 @@ OPTIONS
   --allow-host-override  Allow API_BASE_URL to rebind to a different host
   --accept-risks <ids> Comma-separated spec-linter findings to downgrade (mode b), e.g. T-API-1:POST_charge
   --mode <a|b>         Spec-lint mode: a=warn-only (default), b=block on HIGH/CRITICAL
+  --transport <t>      serve: "stdio" (default) or "http" (StreamableHTTP)
+  --port <n>           serve --transport http: port to listen on (default 3000)
+  --host <addr>        serve --transport http: bind address (default 127.0.0.1 — binding
+                        beyond localhost has no built-in auth, logs a loud warning)
   --help, -h           Show this help
 
 EXAMPLES
@@ -115,6 +125,9 @@ EXAMPLES
 
   # Direct MCP server (no codegen, use in settings.json)
   ay-api-gen serve https://petstore.swagger.io/v2/swagger.json
+
+  # Direct MCP server over HTTP instead of stdio (localhost-only by default)
+  ay-api-gen serve https://petstore.swagger.io/v2/swagger.json --transport http --port 3000
 
   # Direct API call (no codegen)
   ay-api-gen run https://petstore.swagger.io/v2/swagger.json inventory list
@@ -631,12 +644,16 @@ async function main() {
   // Runtime serve: start MCP server directly from spec (no codegen)
   if (cmd === "serve") {
     const specSource = opts.positional[1];
-    if (!specSource) { console.error("Usage: ay-api-gen serve <spec-url-or-file>"); process.exit(1); }
+    if (!specSource) { console.error("Usage: ay-api-gen serve <spec-url-or-file> [--transport stdio|http] [--port <n>] [--host <addr>]"); process.exit(1); }
     // Re-exec with the runtime MCP server
     const { execSync } = await import("node:child_process");
     const runtimePath = resolve(__dirname, "../src/runtime/mcp-server.js");
+    const runtimeArgs = [runtimePath, specSource];
+    if (opts.transport) runtimeArgs.push("--transport", opts.transport);
+    if (opts.port) runtimeArgs.push("--port", opts.port);
+    if (opts.host) runtimeArgs.push("--host", opts.host);
     try {
-      execSync(`node ${JSON.stringify(runtimePath)} ${JSON.stringify(specSource)}`, { stdio: "inherit" });
+      execSync(`node ${runtimeArgs.map(a => JSON.stringify(a)).join(" ")}`, { stdio: "inherit" });
     } catch { /* server exited */ }
     return;
   }

@@ -199,6 +199,12 @@ unrequested default would be a surprising behavior change:
 - **Rate limiting.** `AY_RATE_LIMIT_RPS=<n>` throttles (delays, doesn't reject)
   outgoing requests to no more than `n` per second per host — protects both the
   upstream API and your own API key from being hammered by a fast-looping agent.
+- **HTTP transport.** `ay-api-gen serve <spec>` defaults to stdio (the shape
+  Claude Code expects when it spawns an MCP server). Pass
+  `--transport http [--port 3000] [--host 127.0.0.1]` for an HTTP-reachable
+  server instead — for a browser-based MCP client, or a server shared by a
+  team. Binds to `127.0.0.1` by default; binding beyond localhost prints a
+  loud warning, since this server has no built-in authentication of its own.
 
 ## Supported specs
 

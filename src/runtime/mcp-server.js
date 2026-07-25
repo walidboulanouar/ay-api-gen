@@ -19,14 +19,20 @@
  *
  * Or from CLI:
  *   ay-api-gen serve https://petstore.swagger.io/v2/swagger.json
+ *
+ * HTTP transport (defaults to stdio; opt in for an HTTP-reachable server,
+ * e.g. for a browser-based MCP client or a shared team server):
+ *   ay-api-gen serve <spec> --transport http [--port 3000] [--host 127.0.0.1]
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 import { loadSpec, extractEndpoints } from "../parser.js";
 import { safeDescription } from "../desc-sanitize.js";
 import { asMcpContent } from "../truncate.js";
@@ -179,10 +185,37 @@ function zodForParam(param) {
   return schema;
 }
 
+// ── CLI args ──
+// A minority of MCP clients (and any use case that isn't Claude Code
+// spawning us as a subprocess — a browser-based MCP client, a shared team
+// server) need an HTTP-reachable server rather than stdio. Defaults to
+// stdio (unchanged behavior) unless --transport http is passed explicitly.
+function parseServeArgs(argv) {
+  const opts = { transport: "stdio", host: "127.0.0.1", port: 3000 };
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--transport") opts.transport = argv[++i];
+    else if (arg === "--port") opts.port = parseInt(argv[++i], 10);
+    else if (arg === "--host") opts.host = argv[++i];
+    else if (!arg.startsWith("-")) positional.push(arg);
+  }
+  return { opts, positional };
+}
+
 // ── Main ──
-const specSource = process.argv[2];
+const { opts: serveOpts, positional: serveArgs } = parseServeArgs(process.argv.slice(2));
+const specSource = serveArgs[0];
 if (!specSource) {
-  console.error("Usage: mcp-server.js <openapi-spec-url-or-path>");
+  console.error("Usage: mcp-server.js <openapi-spec-url-or-path> [--transport stdio|http] [--port <n>] [--host <addr>]");
+  process.exit(1);
+}
+if (serveOpts.transport !== "stdio" && serveOpts.transport !== "http") {
+  console.error(`Unknown --transport "${serveOpts.transport}". Expected "stdio" or "http".`);
+  process.exit(1);
+}
+if (serveOpts.transport === "http" && (!Number.isInteger(serveOpts.port) || serveOpts.port <= 0 || serveOpts.port > 65535)) {
+  console.error(`Invalid --port. Expected an integer between 1 and 65535.`);
   process.exit(1);
 }
 
@@ -263,5 +296,57 @@ for (const ep of endpoints) {
   );
 }
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+if (serveOpts.transport === "http") {
+  // Stateful mode (session ID generated per connection). Tried stateless
+  // mode (sessionIdGenerator: undefined) first since it looked simpler on
+  // paper — it isn't actually usable for a real interactive MCP session:
+  // verified live that the SDK's own handleRequest() 500s on the
+  // `notifications/initialized` message that immediately follows
+  // `initialize` when there's no session to anchor it to. Stateful mode
+  // (confirmed working end-to-end against a real StreamableHTTPClientTransport)
+  // is the correct choice for a server that lists tools once and then
+  // serves many subsequent tool calls in the same logical session.
+  const { randomUUID } = await import("node:crypto");
+  const httpTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
+  await server.connect(httpTransport);
+
+  const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (!LOOPBACK_HOSTS.has(serveOpts.host)) {
+    console.error(
+      `[ay-api-gen] WARNING: binding to "${serveOpts.host}" exposes this MCP server beyond localhost. ` +
+      "This server has no built-in authentication — anyone who can reach this host:port can call every tool " +
+      "with whatever credentials are in this process's environment. Only bind beyond 127.0.0.1 if you understand " +
+      "that exposure (e.g. behind your own reverse proxy with auth already in front of it)."
+    );
+  }
+
+  const httpServer = createServer(async (req, res) => {
+    if (req.method !== "POST") {
+      await httpTransport.handleRequest(req, res);
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    let body;
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      body = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON body" }));
+      return;
+    }
+    await httpTransport.handleRequest(req, res, body);
+  });
+
+  await new Promise((resolvePromise, rejectPromise) => {
+    httpServer.once("error", rejectPromise);
+    httpServer.listen(serveOpts.port, serveOpts.host, () => {
+      console.error(`[ay-api-gen] MCP StreamableHTTP server listening on http://${serveOpts.host}:${serveOpts.port}/`);
+      resolvePromise();
+    });
+  });
+} else {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}

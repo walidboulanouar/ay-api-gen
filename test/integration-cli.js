@@ -21,6 +21,7 @@ import { tmpdir, homedir } from "node:os";
 import { registerAPI } from "../src/registry.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = resolve(__dirname, "../bin/ay-api-gen.js");
@@ -315,8 +316,13 @@ async function testAuditBaseline() {
 
   const { stdout: dirtyOut, code: dirtyCode } = await runCLI(["audit", "--baseline", dirtySpec], { cwd: tmp });
   assert(dirtyCode === 0, "audit --baseline: exits 0 in warn-only mode even with HIGH findings");
-  assert(dirtyOut.includes("4 finding(s)"), "audit --baseline: reports all 4 T-API-1 findings on the unauthenticated mutating endpoints");
+  // 4 T-API-1 (unauthenticated mutating endpoints) + 1 T-API-5 (this fixture
+  // declares zero security schemes anywhere, spec-wide — a real, correct
+  // finding, not a test artifact: T-API-5 was added after this fixture and
+  // this count).
+  assert(dirtyOut.includes("5 finding(s)"), "audit --baseline: reports all 4 T-API-1 findings plus 1 T-API-5 (no security schemes declared) finding");
   assert(dirtyOut.includes("T-API-1"), "audit --baseline: labels findings with their threat ID");
+  assert(dirtyOut.includes("T-API-5") && dirtyOut.includes("No security schemes"), "audit --baseline: reports T-API-5 for a spec with zero declared security schemes");
 
   const { stdout: cleanOut, code: cleanCode } = await runCLI(["audit", "--baseline", cleanSpec], { cwd: tmp });
   assert(cleanCode === 0, "audit --baseline: exits 0 on a spec with no findings");
@@ -645,10 +651,115 @@ async function testOpenAPI31RuntimeNullable() {
   }
 }
 
+/** Bind a throwaway server to an OS-assigned port, capture it, close it — gives us a free port to hand to a real test server. */
+async function getFreePort() {
+  const probe = createServer();
+  await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+  const port = probe.address().port;
+  await new Promise((r) => probe.close(r));
+  return port;
+}
+
+// ── Gap-analysis item: StreamableHTTP transport for `serve` (competitors ship multiple transports, we only had stdio) ──
+async function testHttpTransport() {
+  console.log("\n--- Integration: StreamableHTTP transport (gap-analysis item) ---");
+
+  // runCLI always spawns BIN_PATH — for this test we need to spawn the
+  // runtime script directly, since it's the transport-selection logic
+  // itself under test, not the `serve` subcommand wrapper (which just
+  // execSync's this same script — also avoids that wrapper's grandchild-
+  // process cleanup risk for a server that never exits on its own).
+  async function runRuntimeDirect(args, opts = {}) {
+    return new Promise((resolvePromise) => {
+      const child = spawn("node", [RUNTIME_MCP_SERVER_PATH, ...args], { env: { ...process.env, ...opts.env } });
+      let out = "";
+      child.stdout.on("data", (d) => { out += d; });
+      child.stderr.on("data", (d) => { out += d; });
+      const timer = setTimeout(() => child.kill("SIGKILL"), opts.timeout || 5000);
+      child.on("close", (code) => { clearTimeout(timer); resolvePromise({ stdout: out, code: code ?? 1 }); });
+    });
+  }
+
+  const badTransportResult = await runRuntimeDirect([resolve(FIXTURES, "diff-a.json"), "--transport", "bogus"]);
+  assert(badTransportResult.code === 1, "http transport: an unknown --transport value exits 1");
+  assert(badTransportResult.stdout.includes('Unknown --transport "bogus"'), "http transport: an unknown --transport value gets a clear error message");
+
+  const badPortResult = await runRuntimeDirect([resolve(FIXTURES, "diff-a.json"), "--transport", "http", "--port", "999999"]);
+  assert(badPortResult.code === 1, "http transport: an out-of-range --port exits 1");
+  assert(badPortResult.stdout.includes("Invalid --port"), "http transport: an out-of-range --port gets a clear error message");
+
+  // Real end-to-end protocol test: spec on an ephemeral upstream fixture,
+  // MCP server on --transport http, real StreamableHTTPClientTransport
+  // roundtrip (list tools, call a tool, confirm the upstream was hit).
+  let hitCount = 0;
+  const spec = {
+    openapi: "3.0.3",
+    info: { title: "HTTP Transport Test", version: "1.0.0" },
+    servers: [{ url: "PLACEHOLDER" }],
+    paths: { "/thing": { get: { operationId: "getThing", summary: "Get thing", responses: { 200: { description: "ok" } } } } },
+  };
+  const fixtureServer = createServer((req, res) => {
+    if (req.url === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(spec)); return; }
+    if (req.url === "/thing") { hitCount++; res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ hit: hitCount })); return; }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => fixtureServer.listen(0, "127.0.0.1", r));
+  const fixturePort = fixtureServer.address().port;
+  spec.servers[0].url = `http://127.0.0.1:${fixturePort}`;
+  const mcpPort = await getFreePort();
+
+  // No --host passed: proves the DEFAULT bind is loopback-only, not just
+  // an explicitly-requested one.
+  const child = spawn("node", [
+    RUNTIME_MCP_SERVER_PATH, `http://127.0.0.1:${fixturePort}/openapi.json`,
+    "--transport", "http", "--port", String(mcpPort),
+  ], { env: { ...process.env, AY_ALLOW_PRIVATE_HOSTS: "1" } });
+
+  let serverOutput = "";
+  let ready = false;
+  child.stderr.on("data", (d) => { serverOutput += d; if (d.toString().includes("listening on")) ready = true; });
+
+  try {
+    const start = Date.now();
+    while (!ready && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 50));
+    assert(ready, "http transport: server prints a 'listening on' line once bound");
+    assert(!serverOutput.includes("WARNING"), "http transport: no non-loopback warning when binding to the default host (127.0.0.1)");
+
+    const client = new Client({ name: "http-transport-test", version: "1.0.0" }, { capabilities: {} });
+    const clientTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${mcpPort}/`));
+    await client.connect(clientTransport);
+
+    const tools = await client.listTools();
+    assert(tools.tools.some((t) => t.name === "get_thing"), "http transport: listTools() over StreamableHTTP returns the expected tool");
+
+    const result = await client.callTool({ name: "get_thing", arguments: {} });
+    assert(!result.isError, "http transport: a real tool call over StreamableHTTP succeeds");
+    assert(hitCount === 1, `http transport: the tool call actually reached the upstream fixture exactly once (got ${hitCount})`);
+
+    await client.close();
+  } finally {
+    child.kill("SIGKILL");
+    await new Promise((r) => fixtureServer.close(r));
+  }
+
+  // Non-default host: the loud warning must actually fire.
+  const mcpPort2 = await getFreePort();
+  const child2 = spawn("node", [
+    RUNTIME_MCP_SERVER_PATH, resolve(FIXTURES, "diff-a.json"),
+    "--transport", "http", "--port", String(mcpPort2), "--host", "0.0.0.0",
+  ]);
+  let warnOutput = "";
+  child2.stderr.on("data", (d) => { warnOutput += d; });
+  await new Promise((r) => setTimeout(r, 800));
+  child2.kill("SIGKILL");
+  await new Promise((r) => child2.on("close", r));
+  assert(warnOutput.includes("WARNING") && warnOutput.includes("0.0.0.0"), "http transport: binding beyond 127.0.0.1 (e.g. 0.0.0.0) prints a loud, specific warning");
+}
+
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport];
   for (const t of tests) {
     try {
       await t();

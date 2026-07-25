@@ -4,6 +4,55 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: Competitive gap analysis + 2 gaps closed
+
+**Status: complete.** New task type this session: competitive research rather than pure engineering. Read `.ay/PRODUCT.md` first to nail the category (OpenAPI→MCP codegen with a security-audit angle — the PRD already named Speakeasy/Gram/Gram/`mcp-openapi-proxy` as landscape references from May, but that's two months stale, so treated it as a starting point, not ground truth).
+
+### Research
+
+Ran 5 parallel subagents (public web only — WebSearch/WebFetch, no signups, no authenticated scraping) against 5 real, currently-shipping competitors chosen to span the market: **Speakeasy/Gram** (the direct competitor our own docs already named), **FastMCP** (dominant open-source Python framework, ~25k GitHub stars), **openapi-mcp-generator** by harsha-iiiv (the closest structural peer — a Node/TS CLI, same category as this project), **DigitalAPI** (no-code enterprise SaaS, the opposite end of the market), **openapi-mcp-codegen** by cnoe-io (Python, Cisco-backed platform-engineering ecosystem). Told each subagent to fetch primary sources directly (pricing pages, GitHub repos, security advisories) rather than trust search-result snippets, and to say "not found" rather than guess where data wasn't publicly available — several did exactly that (Speakeasy's current self-serve pricing, FastMCP Cloud's tier limits, both behind auth walls now).
+
+### The headline finding (unplanned, the strongest thing in the whole analysis)
+
+Two of the five competitors have real, disclosed, **patched vulnerabilities** in exactly the classes of bug this project spent S1/S2 hardening against *before* shipping:
+
+- **FastMCP**: CVE-2026-32871 / GHSA-vv7q-7jx5-f767 — unencoded path-parameter substitution in their OpenAPI provider let `../` sequences escape the intended API prefix, an authenticated SSRF (the forged request still carried the configured auth headers).
+- **openapi-mcp-generator**: two disclosed issues — #68 (SSRF via uncontrolled external `$ref` resolution) and #67 (template-literal injection via unsanitized OpenAPI `description` fields, which could leak `process.env` to MCP clients — structurally the *identical* vulnerability class to this project's own T-ING-1/T-GEN-1 fixes). Their SSRF fix itself **regressed within the same week** (#70), needing an emergency point release.
+
+This turns "we have SSRF guards and injection-safe codegen" from a features list into a citable, factual claim: two direct competitors shipped exactly these bugs to production, both retrofitted after public disclosure, one regressing on its own fix. Wrote it up as the headline of `GAP-ANALYSIS.md` §3.
+
+Also notable: Speakeasy has pivoted its entire company positioning to "AI control plane" (RBAC, SSO, prompt-injection detection, PII blocking, SIEM export) — they now market on almost the same axis this project does, not pure developer experience. Their pricing, DigitalAPI's, and FastMCP Cloud's have all gone enterprise-contact-only or auth-walled. That makes "the only fully transparent, zero-signup, zero-cost security tool in the category" (`audit --baseline`) a genuinely distinctive, evidence-backed claim.
+
+### `GAP-ANALYSIS.md` (new, project root)
+
+Three sections, honest in both directions (real gaps admitted, real advantages claimed without underselling): what we're missing entirely (alternate transports, hosted serving, interactive OAuth, multi-tool workflow composition), what we have but competitors do better (spec-linting depth, managed governance UX), what we already do better (the CVE evidence above, a 2-dependency footprint vs. their heavier stacks, transparent free pricing, file-locking, settings-collision protection, and reverse generation — which FastMCP explicitly lacks, per their own open issue #4107).
+
+### What I built (same production bar as the rest of this project — real code, real tests, no stubs)
+
+1. **T-API-4 (sensitive query param) + T-API-5 (weak/no globally-declared auth scheme)** in `spec-linter.js` — both already scoped in `THREAT-MODEL.md`, never implemented; directly deepens the one area competitors (DigitalAPI's Spectral lint, Speakeasy's undisclosed "prompt injection detection") claim to beat us on. Had to update two existing test fixtures whose finding counts legitimately changed (the new checks correctly fire on specs that were missing this signal all along) — same "update the test, don't weaken the assertion" discipline as every other behavior-legitimately-changed case in this project's history.
+2. **StreamableHTTP transport** for `ay-api-gen serve --transport http` — closes the literal "single transport" gap two competitors ship (we only had stdio). Defaults to `127.0.0.1`-only binding with a loud warning required to bind wider. This resolves the exact "needs a security-relevant decision" concern that deferred this same feature (backlog item 20) in an earlier session — now backed by real competitor evidence that a localhost-default posture is expected and defensible, not a novel call I was making up.
+   - **Verification caught a real bug before it shipped.** Built it first using the MCP SDK's documented "stateless" mode (`sessionIdGenerator: undefined`), since the docs present it as the simpler option. A real end-to-end test — spawn the actual runtime server, connect a genuine `StreamableHTTPClientTransport`, drive the real `initialize` → `notifications/initialized` → `tools/call` sequence — found that stateless mode 500s on the `notifications/initialized` message every real MCP session sends immediately after `initialize`. Confirmed via direct server-side debug logging that this was the SDK's own `handleRequest()` throwing, not a bug in my wrapper code. Switched to stateful mode (`sessionIdGenerator: () => randomUUID()`), which is what a persistent-session server actually needs, and confirmed the full real protocol sequence working end-to-end before writing the permanent test.
+   - Also caught (via `ps aux`) and killed one leaked `node` process from manual verification before the final test run — worth remembering to check for stray long-running processes after manually testing anything that binds a port, even in a sandbox with no external exposure.
+
+### What I documented instead of building (genuinely needs live infra/secrets)
+
+- **Interactive OAuth 2.1 PKCE + Dynamic Client Registration** — needs a live OAuth provider (a real dev tenant, or a self-hosted test IdP) to drive and verify a real browser-redirect flow end-to-end. Logged in `HUMAN-SETUP-NEEDED.md` with what's actually needed to build this properly, rather than guessed at an implementation with no way to confirm it's correct.
+- **Hosted/managed MCP server serving** (Gram/DigitalAPI-style) — not really a code gap, closer to a new product surface requiring a hosting-model decision plus real infrastructure. Logged in `HUMAN-SETUP-NEEDED.md`.
+
+### Verification
+
+```bash
+node test/run.js              # 151/151 (145 + 6 new: T-API-4/T-API-5)
+node test/integration-cli.js  # 119/119 (108 + 1 updated assertion + 10 new HTTP-transport tests)
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean — same two pre-existing findings, no new dependencies added
+```
+
+### What's left
+
+Same as every prior session's assessment: S1-08 (Luisa's sign-off), Task 17 (npm publish, blocked on naming + credentials), and the rest of the backlog genuinely blocked or underspecified. The gap analysis didn't surface anything that changes that picture — it surfaced two new *documented* gaps (OAuth PKCE/DCR, hosted serving) that join the same "needs a human decision or live infra" bucket as everything else still open.
+
+---
+
 ## 2026-07-25 — Session: Item 19 (OpenAPI 3.1 full support) — the one non-blocked backlog item
 
 **Status: complete, no wall hit.** The prior session (below) flagged item 19 as "the most self-contained next candidate if another engineering-focused sprint is requested." It was requested, and it turned out to fit comfortably in one session — real but bounded scope, no design decision that needed a human call.

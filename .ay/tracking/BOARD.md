@@ -1,6 +1,6 @@
 # Pipeline Board
 
-> Updated 2026-07-25 · branch `ay-framework` · sprints **S1 (security baseline)**, **S2 (hardening + coverage)**, and **S3 (locking + remaining audits + yaml dependency)** all landed
+> Updated 2026-07-25 · branch `ay-framework` · sprints **S1 (security baseline)**, **S2 (hardening + coverage)**, **S3 (locking + remaining audits + yaml dependency)**, item 19 (OpenAPI 3.1), and a **competitive gap-analysis sprint** all landed
 > Statuses: BACKLOG / READY / IN PROGRESS / BLOCKED / IN REVIEW / DONE
 > See [`../ROADMAP.md`](../ROADMAP.md) for milestone view. See [`../tasks/`](../tasks/) for execution detail.
 
@@ -88,6 +88,21 @@ Source files exist; need integration tests + docs (treated as tech debt — see 
 
 Note: the user's initial S3 request named "T-GEN-2 (the mass-assignment heuristic)" — checked against the actual `THREAT-MODEL.md` (which lives on the `security-threat-model` branch, not `ay-framework`) and found T-GEN-2 is actually "package.json field injection"; the mass-assignment heuristic is T-API-3. Implemented both rather than guessing which one was meant, since neither conflicted and both were real, previously-unaddressed threats.
 
+## Competitive gap-analysis sprint (landed 2026-07-25)
+
+Full writeup: [`../../GAP-ANALYSIS.md`](../../GAP-ANALYSIS.md). Public web research (no signups, no authenticated scraping) on 5 real, currently-shipping competitors: Speakeasy/Gram, FastMCP + Prefect Horizon, `openapi-mcp-generator` (harsha-iiiv), DigitalAPI, `openapi-mcp-codegen` (cnoe-io).
+
+**Headline finding**: two competitors have disclosed, patched CVEs/vulnerabilities in exactly the vulnerability classes this project hardened preemptively — FastMCP's SSRF/path-traversal CVE-2026-32871 in its OpenAPI provider, and `openapi-mcp-generator`'s SSRF-via-$ref (#68) and template-literal-injection-leaking-`process.env` (#67), the latter a near-exact match for this project's own T-ING-1/T-GEN-1 class of fix — with their own SSRF patch regressing days later (#70). This is now the strongest evidence-backed claim in `GAP-ANALYSIS.md` §3.
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| gap-1 | T-API-4 (sensitive query param) + T-API-5 (weak/no global auth scheme) | DONE | Extended `spec-linter.js` with checks already scoped in `THREAT-MODEL.md` but never implemented — directly deepens the one area competitors (DigitalAPI's Spectral lint, Speakeasy's undisclosed "prompt injection detection") claim to beat us on. |
+| gap-2 | StreamableHTTP transport for `serve` | DONE | See item 20's updated row above. |
+
+**Not built, documented instead** (per instructions — genuinely needs live infra/secrets, not guessed at): interactive OAuth 2.1 PKCE + Dynamic Client Registration (needs a live OAuth provider to verify against), and hosted/managed MCP server serving (needs real hosting infrastructure + a product decision on hosting model). Both logged in `HUMAN-SETUP-NEEDED.md`.
+
+**Not built, deferred with reasoning** (real gaps, not underspecified, but bigger than a same-night add-on): multi-tool workflow composition (Gram-style), broader RBAC/SSO/audit-trail governance UX (a hosted-service feature category, not a CLI feature).
+
 ## Backlog — commercial / scale
 
 **Surveyed 2026-07-25** for anything buildable without a human product/business
@@ -109,7 +124,7 @@ per-item reasoning.
 | C-06 | Customer-owned-API mode (`--owned`) | T1/T2 opt-in with interactive confirmation. Blocked: depends on T1/T2 (C-01/C-03), which don't exist yet. |
 | C-07 | Acceptance log + `.ay-api-gen.yml` config schema | OQ-5 — required for T2. Blocked: same ADR-012-not-Accepted issue as C-02 — this literally IS ADR-012's implementation. |
 | 19 | OpenAPI 3.1 full support (webhooks, pathItems) | **DONE 2026-07-25.** Research subagent produced a prioritized 3.0→3.1 diff (JSON Schema 2020-12 alignment, webhooks, pathItems); implemented every item that had real, currently-triggered impact. Fixed the `type` array (`nullable`) normalization at the single source of truth (`parser.js`'s `buildSchema()`) — every `switch(schema.type)` in the codebase was silently mismapping array-valued types to a wrong Zod fallback before this. Added `components.pathItems` and `webhooks` `$ref` resolution (a `$ref`'d PathItem was previously silently dropped — `pathItem.get` was `undefined` on the raw `{$ref}` object, no error). Parsed `webhooks` structurally into a separate array but deliberately did NOT turn them into generated tools — confirmed via research this is the technically correct choice (webhooks describe inbound calls the API makes to you, the reverse direction of everything `paths` describes; there's no URL to call). Explicitly NOT implemented: `exclusiveMinimum`/`exclusiveMaximum` numeric form, `examples` vs `example`, `$ref`-sibling semantics — none of these are read anywhere in the codebase today, so there was no existing behavior to fix; would be net-new speculative scope. 16 unit tests (`test/run.js`) + 1 real MCP-protocol end-to-end test proving a `null` argument is actually accepted by the runtime server's Zod validation, not just correct in generated source text — verified by temporarily reverting the fix and confirming the exact predicted Zod rejection (`"expected string, received null"`) before restoring it. |
-| 20 | HTTP-SSE transport for remote MCP servers | Medium — surveyed 2026-07-25, deferred: exposing a network listener needs decisions (bind address, auth model for the SSE endpoint) that are security-relevant enough not to make unilaterally without a human call. |
+| 20 | HTTP transport for remote MCP servers | **DONE 2026-07-25 (later same day)** — StreamableHTTP transport added to `ay-api-gen serve --transport http`. The "needs a security decision" concern from the earlier deferral was resolved with real competitor evidence (`GAP-ANALYSIS.md`, competitive research): `openapi-mcp-generator` and Gram both ship HTTP-reachable transport, and localhost-default binding with an explicit, loud opt-in to bind wider is a defensible, expected default rather than a novel decision. Auth model deliberately left as "none built-in, loud warning if you expose it" — a full auth layer is out of scope for a code-generation CLI and would need the same live-infra verification as the PKCE/DCR gap (see HUMAN-SETUP-NEEDED.md). |
 | 21 | Multi-spec merge (combine N specs into 1 MCP server) | Large; UX questions open — surveyed 2026-07-25, genuinely underspecified per the board's own note, not touched. |
 | 23 | Response caching in runtime | **DONE 2026-07-25.** `src/response-cache.js`, opt-in via `AY_CACHE_TTL_MS`, wired into `runtime/mcp-server.js`. Real MCP-protocol end-to-end test (actual Client/StdioClientTransport roundtrip) + unit tests. |
 | 24 | Rate limiting in runtime | **DONE 2026-07-25.** `src/rate-limiter.js`, opt-in via `AY_RATE_LIMIT_RPS`, per-host throttle (delays, doesn't reject), wired into `runtime/mcp-server.js`. Same real-protocol test rigor as item 23. |

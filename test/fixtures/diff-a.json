@@ -2,6 +2,7 @@
   "openapi": "3.0.3",
   "info": { "title": "Diff Fixture", "version": "1.0.0" },
   "servers": [{ "url": "https://8.8.8.8" }],
+  "security": [{ "bearerAuth": [] }],
   "paths": {
     "/users": {
       "get": {
@@ -24,6 +25,11 @@
         "summary": "Legacy endpoint",
         "responses": { "200": { "description": "ok" } }
       }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
     }
   }
 }

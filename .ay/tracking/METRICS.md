@@ -14,8 +14,9 @@
 | Source delta (S2 → S3 locking + audits + yaml) | +1 file (`src/file-lock.js`), `src/yaml-parser.js` rewritten (custom parser → thin `yaml` wrapper), 4 modified (`settings-injector.js`, `registry.js`, `spec-linter.js`, `bin/ay-api-gen.js`) | See CHANGELOG "Added (S3 sprint)" |
 | Source delta (S3 → T-GEN-4 + backlog items) | +2 files (`response-cache.js`, `rate-limiter.js`), 2 modified (`bin/ay-api-gen.js`, `src/runtime/mcp-server.js`) | See CHANGELOG, latest entries |
 | Source delta (item 19, OpenAPI 3.1 support) | 0 new src files, 4 modified (`parser.js`, `validator.js`, `mcp-generator.js`, `runtime/mcp-server.js`) | See CHANGELOG, latest entry |
+| Source delta (gap-analysis sprint) | 0 new src files, 2 modified (`spec-linter.js`, `runtime/mcp-server.js`), `bin/ay-api-gen.js` modified for `--transport`/`--port`/`--host` | See CHANGELOG, latest entry; `GAP-ANALYSIS.md` (new, project root) |
 | Test files | 5 (`run.js`, `integration-cli.js`, `edge-cases.json`, `fixtures/` — 3 files) | |
-| Tests passing | 145 / 145 in `test/run.js` + 108 / 108 in `test/integration-cli.js` | `node test/run.js` and `node test/integration-cli.js`, run 2026-07-25 |
+| Tests passing | 151 / 151 in `test/run.js` + 119 / 119 in `test/integration-cli.js` | `node test/run.js` and `node test/integration-cli.js`, run 2026-07-25 |
 | Test coverage of v0.1.1 CLI surface | **100%** of doctor/init/discover/diff/slim/filter now have real integration tests | `test/integration-cli.js`, closes B-04 |
 | Test coverage of S1+S2+S3 security fixes | 100% of S1's 7 tasks + S2's T-GEN-1/T-SET-2 findings + S3's B-09/T-GEN-2/T-API-3/T-GEN-4 have ≥1 regression test | `testSecurityHardening()`, `testGenInterpolationHardening()`, `testFileLock()` in `test/run.js`; `testConcurrentWriteLocking()`, `testGen2PackageJsonSafety()`, `testGen4OutputPathSafety()` in `test/integration-cli.js` |
 | OpenAPI 3.1 test coverage | 16 unit tests (`testOpenAPI31Support()` in `test/run.js`) + 1 real MCP-protocol end-to-end test (`testOpenAPI31RuntimeNullable()` in `test/integration-cli.js`), the latter verified to actually fail without the fix (temporarily reverted, confirmed the predicted Zod rejection, restored) | `test/run.js`, `test/integration-cli.js` |
@@ -103,6 +104,21 @@
 | Deliberately not implemented | `exclusiveMinimum`/`exclusiveMaximum` numeric form, `examples` vs `example`, `$ref`-sibling semantics — none read anywhere in the codebase, no existing behavior to fix |
 | Design question resolved without stopping | Whether `webhooks` should become generated callable tools — research confirmed no (wrong direction: inbound vs outbound), so this was resolved on the merits, not treated as a blocking ambiguity |
 | New tests | 16 unit (`test/run.js`) + 1 real MCP-protocol end-to-end test, verified to fail without the fix before confirming it passes with it |
+| Blockers count | 0 |
+
+## Competitive gap-analysis sprint (landed 2026-07-25)
+
+| Metric | Value |
+|--------|-------|
+| Goal | Nail the product category from CLAUDE.md/PRD, research real current competitors, produce an honest gap analysis, close the highest-value buildable gaps |
+| Competitors researched | 5 real, currently-shipping (Speakeasy/Gram, FastMCP + Prefect Horizon, `openapi-mcp-generator`, DigitalAPI, `openapi-mcp-codegen`), all via public web research (no signups, no authenticated access) |
+| Research method | 5 parallel subagents, each told to fetch primary sources directly and say "not found" rather than guess |
+| Headline finding | 2 of 5 competitors have disclosed, patched CVEs/vulnerabilities in exactly the classes this project hardened preemptively (SSRF, spec-field injection leaking `process.env`) — see `GAP-ANALYSIS.md` §3 for citations |
+| Gaps identified | 4 missing entirely, 2 they-do-better, 7 we-already-do-better (evidence-cited, not asserted) — full breakdown in `GAP-ANALYSIS.md` |
+| Gaps closed tonight | 2 (T-API-4/T-API-5 spec-linter checks; StreamableHTTP transport) |
+| Gaps documented, not built (need live infra) | 2 (interactive OAuth PKCE/DCR; hosted/managed serving) — logged in `HUMAN-SETUP-NEEDED.md` per instructions, not guessed at |
+| Bugs found during verification | SDK's documented "stateless" StreamableHTTP mode 500s on `notifications/initialized` — a real, reproducible defect in the assumed-simpler approach, caught before shipping via a real protocol roundtrip test, not a syntax check |
+| New tests | 6 (T-API-4/T-API-5, `test/run.js`) + 10 (StreamableHTTP transport, `test/integration-cli.js`, including a live process-leak check) + 1 updated assertion (audit-baseline finding count, a legitimate behavior change) |
 | Blockers count | 0 |
 
 ## Tracking / process

@@ -106,6 +106,79 @@ function checkApi2_SensitiveInPath(parsed) {
   return findings;
 }
 
+function checkApi4_SensitiveInQuery(parsed) {
+  const findings = [];
+
+  for (const ep of parsed.endpoints) {
+    for (const param of ep.parameters) {
+      if (param.in !== "query") continue;
+      for (const { re, severity } of SENSITIVE_PATH_PATTERNS) {
+        if (re.test(param.name)) {
+          const endpointLabel = `${ep.method} ${ep.path}`;
+          findings.push({
+            id: "T-API-4",
+            severity,
+            endpoint: endpointLabel,
+            endpointSlug: endpointSlug(ep),
+            message: `Query param "${param.name}" on "${endpointLabel}" matches a sensitive-identifier pattern — query strings land in server logs, browser history, and Referer headers.`,
+            remediation: "Move the value to the request body or an Authorization header instead of a query parameter.",
+          });
+          break; // one finding per param is enough
+        }
+      }
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * T-API-5: the spec's global security posture, not per-endpoint. Two
+ * distinct sub-smells: (a) zero security schemes declared anywhere — a
+ * genuinely open API, which may be intentional (a public read-only demo
+ * spec) so kept low severity; (b) the ONLY declared scheme is HTTP Basic
+ * AND the base URL is unencrypted `http://` — basic auth sends
+ * base64-encoded (trivially decoded, not encrypted) credentials on every
+ * request, so doing that over plaintext HTTP is a real, well-known
+ * credential-exposure anti-pattern, kept high severity.
+ *
+ * Complements rather than duplicates T-API-1: T-API-1 only fires on
+ * mutating endpoints with no security *requirement*; an all-GET spec with
+ * zero auth, or a spec whose declared scheme is itself weak, triggers no
+ * T-API-1 finding at all.
+ */
+function checkApi5_WeakGlobalAuth(parsed) {
+  const findings = [];
+  const schemes = Object.values(parsed.securitySchemes || {});
+  const specLabel = "(spec-wide)";
+  const specSlug = "SPEC";
+
+  if (schemes.length === 0) {
+    findings.push({
+      id: "T-API-5",
+      severity: "low",
+      endpoint: specLabel,
+      endpointSlug: `${specSlug}_no_auth_schemes`,
+      message: "No security schemes are declared anywhere in the spec.",
+      remediation: "Confirm this is intentional (a public/read-only API). Otherwise declare a security scheme in `components.securitySchemes`.",
+    });
+  } else if (
+    schemes.every((s) => s.type === "http" && s.scheme === "basic") &&
+    typeof parsed.baseUrl === "string" && parsed.baseUrl.startsWith("http://")
+  ) {
+    findings.push({
+      id: "T-API-5",
+      severity: "high",
+      endpoint: specLabel,
+      endpointSlug: `${specSlug}_basic_auth_over_http`,
+      message: `The only declared auth scheme is HTTP Basic, and the base URL ("${parsed.baseUrl}") is unencrypted http://. Basic auth credentials are base64-encoded, not encrypted — sending them over plaintext HTTP exposes them to anyone on the network path.`,
+      remediation: "Use https:// for the base URL, or switch to a scheme that doesn't transmit reusable credentials on every request (Bearer token, OAuth2).",
+    });
+  }
+
+  return findings;
+}
+
 function checkApi3_MassAssignment(parsed) {
   const findings = [];
 
@@ -144,6 +217,8 @@ export function lintSpec(parsed) {
   findings.push(...checkApi1_UnauthMutating(parsed));
   findings.push(...checkApi2_SensitiveInPath(parsed));
   findings.push(...checkApi3_MassAssignment(parsed));
+  findings.push(...checkApi4_SensitiveInQuery(parsed));
+  findings.push(...checkApi5_WeakGlobalAuth(parsed));
   return findings;
 }
 
