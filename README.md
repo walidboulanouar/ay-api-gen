@@ -171,9 +171,11 @@ picture):
   `ay-api-gen:<name>` in `settings.json`, never overwriting an existing
   unprefixed entry from another tool without `--force`.
 - **Spec linter (`--mode=b`).** Warns by default on unauthenticated mutating
-  endpoints, sensitive identifiers in path params, and privilege/value-sensitive
+  endpoints, sensitive identifiers in path or query params, privilege/value-sensitive
   request-body fields (`role`, `is_admin`, `balance`, etc. — unless marked
-  `readOnly: true`); pass `--mode=b` to block generation on HIGH/CRITICAL
+  `readOnly: true`), weak or missing globally-declared auth schemes, and specs
+  that never declare a rate limit anywhere (429 response or `RateLimit-*`
+  header); pass `--mode=b` to block generation on HIGH/CRITICAL
   findings, with `--accept-risks=<id>:<slug>,...` to explicitly override. Run it
   standalone, free, no license needed: `ay-api-gen audit --baseline <spec>`.
 - **Path-safety guard on `--output`.** A small deny-list of catastrophic targets
@@ -184,6 +186,10 @@ picture):
   protected by an advisory file lock — two `ay-api-gen` invocations racing to
   write the same file (e.g. a CI regen overlapping a local run) can't silently
   clobber each other's update.
+- **Spec size cap.** A spec (fetched or local) over 25MB is rejected before
+  it's ever fully read into memory or handed to the parser — a local file is
+  rejected via a cheap `stat` check, a fetched URL via a streaming byte
+  counter that can't be bypassed by a missing or lying `Content-Length`.
 
 None of this defends against a fully malicious, deliberately-targeted spec with
 unlimited creativity — see the threat model for what's still open.

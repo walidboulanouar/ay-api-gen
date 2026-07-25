@@ -38,6 +38,12 @@
 - Closed two gaps identified in the gap analysis: added T-API-4 (sensitive query param) and T-API-5 (weak/no globally-declared auth scheme) to `spec-linter.js`; added a StreamableHTTP transport option (`ay-api-gen serve --transport http`, localhost-default with a loud warning to bind wider) — the first alternative to stdio this project has shipped.
 - Documented (not built — needs live infra/secrets to build or verify) interactive OAuth 2.1 PKCE/DCR and hosted/managed MCP serving in `HUMAN-SETUP-NEEDED.md`.
 
+### Added (post-PR#1 sprint, landed 2026-07-25)
+- Fixed T-ING-3 (DoS via oversized/malicious spec): `loadSpec()` had no size cap at all. New 25MB cap (`MAX_SPEC_BYTES` in `parser.js`) enforced via a `statSync` pre-check for local files and a streaming byte-counter (`readCapped()`) for fetched URLs — the latter can't be bypassed by a missing or lying `Content-Length` header. Also applied to `discover.js`'s domain-probing fetches (up to 19 probe paths per domain had the same unbounded-read pattern).
+- Added T-API-6 (no declared rate limiting) to `spec-linter.js` — one spec-wide LOW finding when no endpoint anywhere declares a 429 response or a `RateLimit-*`/`X-RateLimit-*` header. `parser.js` now derives `hasRateLimitSignal` per endpoint.
+- Verified (no code change needed) T-GEN-3/T-SUP-2: the generated `package.json` template already exact-pins `@modelcontextprotocol/sdk`, no floating ranges.
+- Updated `README.md`'s Security section to document the new spec-size cap and the T-API-6 lint check.
+
 ## [0.1.1] — 2026-05-11
 
 ### Added (source landed, integration tests pending)

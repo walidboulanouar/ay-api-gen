@@ -317,16 +317,23 @@ async function testAuditBaseline() {
   const { stdout: dirtyOut, code: dirtyCode } = await runCLI(["audit", "--baseline", dirtySpec], { cwd: tmp });
   assert(dirtyCode === 0, "audit --baseline: exits 0 in warn-only mode even with HIGH findings");
   // 4 T-API-1 (unauthenticated mutating endpoints) + 1 T-API-5 (this fixture
-  // declares zero security schemes anywhere, spec-wide — a real, correct
-  // finding, not a test artifact: T-API-5 was added after this fixture and
-  // this count).
-  assert(dirtyOut.includes("5 finding(s)"), "audit --baseline: reports all 4 T-API-1 findings plus 1 T-API-5 (no security schemes declared) finding");
+  // declares zero security schemes anywhere, spec-wide) + 1 T-API-6 (no
+  // endpoint anywhere declares a 429 response or RateLimit header, also
+  // spec-wide) = 6. Each addition is a real, correct finding, not a test
+  // artifact — T-API-5 and T-API-6 were both added after this fixture and
+  // count were first written.
+  assert(dirtyOut.includes("6 finding(s)"), "audit --baseline: reports all 4 T-API-1 findings plus 1 T-API-5 (no security schemes) plus 1 T-API-6 (no rate limit declared)");
   assert(dirtyOut.includes("T-API-1"), "audit --baseline: labels findings with their threat ID");
   assert(dirtyOut.includes("T-API-5") && dirtyOut.includes("No security schemes"), "audit --baseline: reports T-API-5 for a spec with zero declared security schemes");
+  assert(dirtyOut.includes("T-API-6"), "audit --baseline: reports T-API-6 for a spec with no declared rate limiting");
 
   const { stdout: cleanOut, code: cleanCode } = await runCLI(["audit", "--baseline", cleanSpec], { cwd: tmp });
-  assert(cleanCode === 0, "audit --baseline: exits 0 on a spec with no findings");
-  assert(cleanOut.includes("No T0 findings"), "audit --baseline: reports a clean bill of health for a spec with no mutating/sensitive endpoints");
+  assert(cleanCode === 0, "audit --baseline: exits 0 even with only a LOW finding");
+  // This fixture is "clean" for T-API-1..5 (authenticated, no sensitive
+  // fields), but — like virtually every real-world fixture not written to
+  // specifically test T-API-6 — it doesn't declare rate-limit responses/
+  // headers either, so it correctly gets exactly the one LOW T-API-6 finding.
+  assert(cleanOut.includes("1 finding(s)") && cleanOut.includes("T-API-6"), "audit --baseline: reports exactly the 1 LOW T-API-6 finding for a spec with no mutating/sensitive endpoints but no declared rate limiting either");
 
   const { code: blockCode } = await runCLI(["audit", "--baseline", dirtySpec, "--mode", "b"], { cwd: tmp });
   assert(blockCode === 1, "audit --baseline --mode=b: exits 1 (blocking) when HIGH findings are not accepted");

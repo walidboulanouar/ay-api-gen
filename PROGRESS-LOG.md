@@ -4,6 +4,38 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: post-PR#1 threat-model re-audit — T-ING-3, T-API-6
+
+**Status: complete.** First session under new standing rules: the user pushed the prior work and opened PR #1 (`ay-framework` → `master`), and authorized pushing/opening PRs directly going forward, one new branch per meaningful chunk, no direct commits to `master`/`ay-framework`. Also authorized using the Agent tool for parallelizable work and a lightweight `TASKS.md` board to survive `/compact`.
+
+### What I did
+
+Re-read `CLAUDE.md`, `GAP-ANALYSIS.md`, `HUMAN-SETUP-NEEDED.md`, and pulled the full `THREAT-MODEL.md` (still only on `security-threat-model`, not `master`/`ay-framework` — `git show security-threat-model:docs/security/THREAT-MODEL.md`). Cross-checked every threat ID against current code rather than trusting the document's own "current mitigation" notes, which predate S1–S3. Most were already closed. Three concrete, still-open, engineering-scoped gaps remained:
+
+1. **T-ING-3 (DoS via a large or maliciously nested spec)** — confirmed real: `loadSpec()` had no size cap anywhere, `res.text()`/`readFileSync` would read a 500MB spec fully into memory before parsing ever got a chance to reject it. Added a 25MB cap (`MAX_SPEC_BYTES`): a `statSync` pre-check for local files (rejects without ever opening the file), and a streaming byte-counter (`readCapped()`) for fetched URLs that aborts mid-stream once the cap is exceeded — deliberately not trusting `Content-Length`, since a server can omit it or lie. While tracing every unbounded fetch in the codebase (not just `parser.js`), found `discover.js`'s domain-probing (`probeUrl()`, up to 19 candidate paths per domain) had the identical unbounded-`res.text()` pattern — same fix, reused via an exported `readCapped()`.
+2. **T-API-6 (no declared rate limiting)** — real, not yet implemented (the threat model had scoped it since May). Added as a spec-linter check following the exact T-API-1..5 pattern: one spec-wide LOW finding if no endpoint anywhere declares a 429 response or a `RateLimit-*`/`X-RateLimit-*` header. Required a small parser change (`hasRateLimitSignal` per endpoint) since the endpoint model didn't previously retain full response metadata.
+3. **T-GEN-3 / T-SUP-2 (floating dependency version ranges in generated `package.json`)** — audited rather than assumed: the generated-output `package.json` template in `bin/ay-api-gen.js` already exact-pins `@modelcontextprotocol/sdk` (`"1.29.0"`, no `^`), no other dependency is emitted. No fix needed; documented the verification rather than silently skipping it.
+
+### Legitimate test-fixture changes
+
+Two `test/integration-cli.js` assertions on the `audit --baseline` finding counts needed updating: the "dirty" fixture went from 5→6 findings (new T-API-6 low finding), and the fixture previously used as the "clean, zero findings" case now correctly reports exactly 1 (T-API-6, since — like most real-world specs not specifically written to test it — it doesn't declare rate-limit responses/headers either). Same "update the test, don't weaken the assertion" discipline as every prior legitimate-finding-count change in this project's history; documented why in the test comments themselves.
+
+### Verification
+
+```bash
+node test/run.js              # 160/160 (152 + 8 new: T-ING-3 size-cap tests + T-API-6/hasRateLimitSignal tests)
+node test/integration-cli.js  # 120/120 (119 + 1 net-new assertion, 2 updated for the legitimate count change)
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean — same two pre-existing findings, no new dependencies
+```
+
+No leaked processes (`ps aux` checked after manual verification).
+
+### What's left
+
+Same picture as every prior session: S1-08 (Luisa's sign-off), Task 17 (npm publish, blocked on naming + credentials — see `SHOWCASE.html`'s provisioning checklist for the full ordered list), and the C-01..C-07 commercial backlog all still genuinely blocked on human decisions or live infra. The remaining `THREAT-MODEL.md` items not covered above (T-ING-4 YAML parser review, T-RUN-2/T-RUN-5/T-RUN-7) were checked and found either already adequately mitigated or not currently exploitable given the present code shape — no action needed, not silently skipped.
+
+---
+
 ## 2026-07-25 — Session: Competitive gap analysis + 2 gaps closed
 
 **Status: complete.** New task type this session: competitive research rather than pure engineering. Read `.ay/PRODUCT.md` first to nail the category (OpenAPI→MCP codegen with a security-audit angle — the PRD already named Speakeasy/Gram/Gram/`mcp-openapi-proxy` as landscape references from May, but that's two months stale, so treated it as a starting point, not ground truth).

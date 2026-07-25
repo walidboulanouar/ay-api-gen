@@ -209,6 +209,36 @@ function checkApi3_MassAssignment(parsed) {
 }
 
 /**
+ * T-API-6: no declared rate limiting anywhere in the spec — no endpoint
+ * declares a 429 response, and no response declares a RateLimit- or
+ * X-RateLimit-prefixed header. Lower severity than the other T-API checks:
+ * this is primarily a cost/availability concern (an LLM-driven caller has
+ * no signal to back off), not a credential or authorization issue, and
+ * plenty of legitimately unlimited internal/low-traffic APIs will
+ * correctly trigger it. Spec-wide, one finding — mirrors T-API-5's
+ * spec-wide-not-per-endpoint shape, since "add rate limiting" isn't an
+ * endpoint-by-endpoint fix.
+ */
+function checkApi6_NoRateLimit(parsed) {
+  const findings = [];
+  if (parsed.endpoints.length === 0) return findings;
+
+  const anyEndpointDeclaresRateLimit = parsed.endpoints.some((ep) => ep.hasRateLimitSignal);
+  if (!anyEndpointDeclaresRateLimit) {
+    findings.push({
+      id: "T-API-6",
+      severity: "low",
+      endpoint: "(spec-wide)",
+      endpointSlug: "SPEC_no_rate_limit",
+      message: "No endpoint declares a 429 response or a RateLimit-*/X-RateLimit-* header anywhere in the spec.",
+      remediation: "If the upstream API does rate-limit, document it (a 429 response + RateLimit headers) so callers — including an LLM-driven MCP client — have a signal to back off instead of hammering the API on retry.",
+    });
+  }
+
+  return findings;
+}
+
+/**
  * @param {object} parsed - Output from extractEndpoints()
  * @returns {Array<object>} findings
  */
@@ -219,6 +249,7 @@ export function lintSpec(parsed) {
   findings.push(...checkApi3_MassAssignment(parsed));
   findings.push(...checkApi4_SensitiveInQuery(parsed));
   findings.push(...checkApi5_WeakGlobalAuth(parsed));
+  findings.push(...checkApi6_NoRateLimit(parsed));
   return findings;
 }
 

@@ -3,6 +3,8 @@
  * Given a domain, auto-find OpenAPI/Swagger specs by probing known paths.
  */
 
+import { readCapped, MAX_SPEC_BYTES } from "./parser.js";
+
 const PROBE_PATHS = [
   "/openapi.json",
   "/swagger.json",
@@ -54,7 +56,7 @@ async function probeUrl(url) {
       return null;
     }
 
-    const text = await res.text();
+    const text = await readCapped(res, MAX_SPEC_BYTES);
     try {
       const json = JSON.parse(text);
       // Check if it looks like an OpenAPI/Swagger spec
