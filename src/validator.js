@@ -29,8 +29,23 @@ export function validateSpec(spec) {
   }
 
   // Paths
+  const hasWebhooksOnly = (!spec.paths || Object.keys(spec.paths).length === 0) &&
+    spec.webhooks && Object.keys(spec.webhooks).length > 0;
   if (!spec.paths || Object.keys(spec.paths).length === 0) {
-    errors.push("No paths defined. Nothing to generate.");
+    if (hasWebhooksOnly) {
+      errors.push(
+        `No 'paths' defined — this spec only has 'webhooks' (${Object.keys(spec.webhooks).length}). ` +
+        "ay-api-gen generates tools that call an API, but webhooks describe inbound calls the API makes " +
+        "to you, not endpoints this tool can call. Nothing to generate."
+      );
+    } else {
+      errors.push("No paths defined. Nothing to generate.");
+    }
+  } else if (spec.webhooks && Object.keys(spec.webhooks).length > 0) {
+    warnings.push(
+      `Spec also declares ${Object.keys(spec.webhooks).length} webhook(s) — these are not generated as ` +
+      "tools (they describe inbound calls the API makes to you, not ones ay-api-gen can call)."
+    );
   }
 
   // Servers / host

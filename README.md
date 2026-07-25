@@ -144,13 +144,87 @@ ay-api-gen regen [name|--all]               # Regenerate from saved config
 --help, -h           Show help
 ```
 
+## Security
+
+A spec you didn't write is untrusted input — its title, descriptions, and declared
+base URL all end up in generated code or in Claude's context. `ay-api-gen` ships
+several default-on mitigations (see `docs/security/THREAT-MODEL.md` for the full
+picture):
+
+- **Same-host base URL guard.** `API_BASE_URL` may only change the path of the
+  spec's declared base URL, not the host/scheme — this stops a `settings.json`
+  edit from silently rebinding your auth-attached requests to an attacker host.
+  Opt into a genuine cross-host swap with `API_BASE_URL_ALLOW_HOST_OVERRIDE=1`
+  (env) or `--allow-host-override` (generation time); both log loudly.
+- **Private-IP / metadata deny-list.** Requests to loopback, link-local, RFC1918,
+  and cloud-metadata ranges (e.g. `169.254.169.254`) are refused by default,
+  both for the spec's declared base URL and at request time (catches DNS
+  rebinding). Opt out with `AY_ALLOW_PRIVATE_HOSTS=1` for legitimate intranet APIs.
+- **Truncated, boundary-marked responses.** API responses are capped (default
+  8000 chars / 5 array items — tune with `AY_TRUNCATE_MAX_CHARS` /
+  `AY_TRUNCATE_MAX_ITEMS`) and wrapped in `--- begin/end API response
+  (untrusted) ---` markers before reaching Claude's context.
+- **Untrusted, capped tool descriptions.** Tool and parameter descriptions are
+  capped at 500 chars, forced single-line, and prefixed `[tool description,
+  untrusted]` so the model has an anchor to discount injected instructions.
+- **Namespaced settings entries.** Generated MCP servers register under
+  `ay-api-gen:<name>` in `settings.json`, never overwriting an existing
+  unprefixed entry from another tool without `--force`.
+- **Spec linter (`--mode=b`).** Warns by default on unauthenticated mutating
+  endpoints, sensitive identifiers in path params, and privilege/value-sensitive
+  request-body fields (`role`, `is_admin`, `balance`, etc. — unless marked
+  `readOnly: true`); pass `--mode=b` to block generation on HIGH/CRITICAL
+  findings, with `--accept-risks=<id>:<slug>,...` to explicitly override. Run it
+  standalone, free, no license needed: `ay-api-gen audit --baseline <spec>`.
+- **Path-safety guard on `--output`.** A small deny-list of catastrophic targets
+  (system directories, the bare home directory root) is refused outright;
+  anything else outside the current working directory is allowed (that's a
+  normal use of `--output`) but prints a visible warning.
+- **Locked, concurrency-safe writes.** `settings.json` and the API registry are
+  protected by an advisory file lock — two `ay-api-gen` invocations racing to
+  write the same file (e.g. a CI regen overlapping a local run) can't silently
+  clobber each other's update.
+
+None of this defends against a fully malicious, deliberately-targeted spec with
+unlimited creativity — see the threat model for what's still open.
+
+## Runtime tuning (`serve` / generated servers)
+
+Both opt-in — off by default, since the right values are per-API and an
+unrequested default would be a surprising behavior change:
+
+- **Response caching.** `AY_CACHE_TTL_MS=<ms>` caches idempotent `GET`/`HEAD`
+  responses in memory for the given duration, keyed by method + full URL.
+  Mutating methods are never cached.
+- **Rate limiting.** `AY_RATE_LIMIT_RPS=<n>` throttles (delays, doesn't reject)
+  outgoing requests to no more than `n` per second per host — protects both the
+  upstream API and your own API key from being hammered by a fast-looping agent.
+- **HTTP transport.** `ay-api-gen serve <spec>` defaults to stdio (the shape
+  Claude Code expects when it spawns an MCP server). Pass
+  `--transport http [--port 3000] [--host 127.0.0.1]` for an HTTP-reachable
+  server instead — for a browser-based MCP client, or a server shared by a
+  team. Binds to `127.0.0.1` by default; binding beyond localhost prints a
+  loud warning, since this server has no built-in authentication of its own.
+
 ## Supported specs
 
-- Swagger 2.0 (JSON)
-- OpenAPI 3.0.x (JSON)
-- OpenAPI 3.1.x (JSON)
+- Swagger 2.0
+- OpenAPI 3.0.x
+- OpenAPI 3.1.x — including the JSON Schema 2020-12 `nullable` migration (both
+  3.1's `type: ["string", "null"]` and legacy `nullable: true` are recognized —
+  real-world specs mix both conventions even under a 3.1 header), whole-PathItem
+  `$ref`s via `components.pathItems`, and `webhooks` (parsed structurally but
+  never generated as callable tools — a webhook describes a request the API
+  sends *to* you, not one this tool can call *on* the API; `ay-api-gen`
+  generates outbound-calling tools, so there's nothing sensible to generate
+  from them, but you'll get a clear message rather than silent data loss)
+- JSON or YAML, both formats, no separate conversion step needed
 
-YAML specs: convert first with `npx js-yaml spec.yaml > spec.json`.
+Not implemented, because nothing in this codebase currently reads them (no
+existing behavior to fix): `exclusiveMinimum`/`exclusiveMaximum`'s
+boolean-vs-numeric form change, `examples` (plural) vs `example`, and `$ref`
+sibling-keyword semantics — the last of these is genuinely contested within
+the JSON Schema/OpenAPI community, not just unimplemented here.
 
 ## Multi-API setup
 

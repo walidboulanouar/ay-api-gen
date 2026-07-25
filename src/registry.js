@@ -6,6 +6,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { withFileLock } from "./file-lock.js";
 
 const REGISTRY_PATH = ".ay/apis/registry.json";
 
@@ -39,31 +40,44 @@ export function saveRegistry(registry, projectDir = process.cwd()) {
 
 /**
  * Register a generated API.
+ * Holds an exclusive lock across the read-modify-write cycle (B-09) — two
+ * concurrent `ay-api-gen` invocations (e.g. a CI regen overlapping a local
+ * run) must not both read the same stale registry and have the second
+ * write silently clobber the first's addition.
  * @param {string} name
  * @param {object} config - { source, baseUrl, outputDir, endpointCount, authTypes, generatedAt }
  * @param {string} projectDir
+ * @returns {Promise<void>}
  */
-export function registerAPI(name, config, projectDir = process.cwd()) {
-  const registry = loadRegistry(projectDir);
-  registry.apis[name] = {
-    ...config,
-    generatedAt: new Date().toISOString(),
-  };
-  saveRegistry(registry, projectDir);
+export async function registerAPI(name, config, projectDir = process.cwd()) {
+  const path = resolve(projectDir, REGISTRY_PATH);
+  mkdirSync(dirname(path), { recursive: true });
+  return withFileLock(path, () => {
+    const registry = loadRegistry(projectDir);
+    registry.apis[name] = {
+      ...config,
+      generatedAt: new Date().toISOString(),
+    };
+    saveRegistry(registry, projectDir);
+  });
 }
 
 /**
- * Remove an API from the registry.
+ * Remove an API from the registry. Same locking rationale as registerAPI.
  * @param {string} name
  * @param {string} projectDir
- * @returns {boolean} true if found and removed
+ * @returns {Promise<boolean>} true if found and removed
  */
-export function unregisterAPI(name, projectDir = process.cwd()) {
-  const registry = loadRegistry(projectDir);
-  if (!registry.apis[name]) return false;
-  delete registry.apis[name];
-  saveRegistry(registry, projectDir);
-  return true;
+export async function unregisterAPI(name, projectDir = process.cwd()) {
+  const path = resolve(projectDir, REGISTRY_PATH);
+  mkdirSync(dirname(path), { recursive: true });
+  return withFileLock(path, () => {
+    const registry = loadRegistry(projectDir);
+    if (!registry.apis[name]) return false;
+    delete registry.apis[name];
+    saveRegistry(registry, projectDir);
+    return true;
+  });
 }
 
 /**

@@ -19,15 +19,26 @@
  *
  * Or from CLI:
  *   ay-api-gen serve https://petstore.swagger.io/v2/swagger.json
+ *
+ * HTTP transport (defaults to stdio; opt in for an HTTP-reachable server,
+ * e.g. for a browser-based MCP client or a shared team server):
+ *   ay-api-gen serve <spec> --transport http [--port 3000] [--host 127.0.0.1]
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 import { loadSpec, extractEndpoints } from "../parser.js";
+import { safeDescription } from "../desc-sanitize.js";
+import { asMcpContent } from "../truncate.js";
+import { resolveBaseUrl, assertHostAllowed } from "../url-guard.js";
+import { isCacheable, cacheKey, getCached, setCached } from "../response-cache.js";
+import { throttle, rpsToMinIntervalMs } from "../rate-limiter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -119,10 +130,20 @@ function buildUrl(baseUrl, pathTemplate, params, authQuery) {
   return queryParts.length > 0 ? `${fullUrl}?${queryParts.join("&")}` : fullUrl;
 }
 
+const CACHE_TTL_MS = Number(process.env.AY_CACHE_TTL_MS) || 0;
+const RATE_LIMIT_MIN_INTERVAL_MS = rpsToMinIntervalMs(process.env.AY_RATE_LIMIT_RPS);
+
 async function callApi(baseUrl, method, path, params, bodyParams, securitySchemes) {
   const authQuery = getAuthQueryParams(securitySchemes);
   const url = buildUrl(baseUrl, path, params, authQuery);
   const headers = getAuthHeaders(securitySchemes);
+
+  const cacheable = CACHE_TTL_MS > 0 && isCacheable(method);
+  const key = cacheable ? cacheKey(method, url) : null;
+  if (cacheable) {
+    const cached = getCached(key);
+    if (cached !== undefined) return cached;
+  }
 
   const opts = { method, headers };
   if (bodyParams && Object.keys(bodyParams).length > 0 && method !== "GET" && method !== "HEAD") {
@@ -130,12 +151,15 @@ async function callApi(baseUrl, method, path, params, bodyParams, securityScheme
   }
 
   try {
+    await assertHostAllowed(url);
+    await throttle(new URL(url).host, RATE_LIMIT_MIN_INTERVAL_MS);
     const res = await fetch(url, opts);
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch { data = text; }
-    if (!res.ok) return { error: true, status: res.status, statusText: res.statusText, body: data };
-    return data;
+    const result = res.ok ? data : { error: true, status: res.status, statusText: res.statusText, body: data };
+    if (cacheable && res.ok) setCached(key, result, CACHE_TTL_MS);
+    return result;
   } catch (err) {
     return { error: true, message: err.message };
   }
@@ -155,15 +179,43 @@ function zodForParam(param) {
       default: schema = z.string(); break;
     }
   }
-  if (param.description) schema = schema.describe(param.description);
+  if (param.schema?.nullable) schema = schema.nullable();
+  if (param.description) schema = schema.describe(safeDescription(param.description, "param"));
   if (!param.required) schema = schema.optional();
   return schema;
 }
 
+// ── CLI args ──
+// A minority of MCP clients (and any use case that isn't Claude Code
+// spawning us as a subprocess — a browser-based MCP client, a shared team
+// server) need an HTTP-reachable server rather than stdio. Defaults to
+// stdio (unchanged behavior) unless --transport http is passed explicitly.
+function parseServeArgs(argv) {
+  const opts = { transport: "stdio", host: "127.0.0.1", port: 3000 };
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--transport") opts.transport = argv[++i];
+    else if (arg === "--port") opts.port = parseInt(argv[++i], 10);
+    else if (arg === "--host") opts.host = argv[++i];
+    else if (!arg.startsWith("-")) positional.push(arg);
+  }
+  return { opts, positional };
+}
+
 // ── Main ──
-const specSource = process.argv[2];
+const { opts: serveOpts, positional: serveArgs } = parseServeArgs(process.argv.slice(2));
+const specSource = serveArgs[0];
 if (!specSource) {
-  console.error("Usage: mcp-server.js <openapi-spec-url-or-path>");
+  console.error("Usage: mcp-server.js <openapi-spec-url-or-path> [--transport stdio|http] [--port <n>] [--host <addr>]");
+  process.exit(1);
+}
+if (serveOpts.transport !== "stdio" && serveOpts.transport !== "http") {
+  console.error(`Unknown --transport "${serveOpts.transport}". Expected "stdio" or "http".`);
+  process.exit(1);
+}
+if (serveOpts.transport === "http" && (!Number.isInteger(serveOpts.port) || serveOpts.port <= 0 || serveOpts.port > 65535)) {
+  console.error(`Invalid --port. Expected an integer between 1 and 65535.`);
   process.exit(1);
 }
 
@@ -171,11 +223,13 @@ const spec = await loadSpec(specSource);
 const parsed = extractEndpoints(spec);
 const { baseUrl, info, endpoints, securitySchemes } = parsed;
 
+await assertHostAllowed(baseUrl);
+
 const apiName = process.env.MCP_SERVER_NAME ||
   info.title?.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().replace(/-+/g, "-") ||
   "api";
 
-const overrideBaseUrl = process.env.API_BASE_URL || baseUrl;
+const overrideBaseUrl = resolveBaseUrl(baseUrl, process.env.API_BASE_URL);
 
 const server = new McpServer({
   name: apiName,
@@ -204,7 +258,8 @@ for (const ep of endpoints) {
           default: s = z.string(); break;
         }
       }
-      if (val.description) s = s.describe(val.description);
+      if (val.nullable) s = s.nullable();
+      if (val.description) s = s.describe(safeDescription(val.description, "param"));
       if (!isRequired) s = s.optional();
       schemaObj[key] = s;
     }
@@ -216,7 +271,7 @@ for (const ep of endpoints) {
 
   server.tool(
     ep.toolName,
-    ep.summary || `${ep.method} ${ep.path}`,
+    safeDescription(ep.summary, "tool") || `${ep.method} ${ep.path}`,
     schemaObj,
     async (params) => {
       const pathQueryParams = {};
@@ -233,10 +288,65 @@ for (const ep of endpoints) {
       }
 
       const result = await callApi(overrideBaseUrl, ep.method, ep.path, pathQueryParams, bodyParams, securitySchemes);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return asMcpContent(result, {
+        maxChars: Number(process.env.AY_TRUNCATE_MAX_CHARS) || undefined,
+        maxItems: Number(process.env.AY_TRUNCATE_MAX_ITEMS) || undefined,
+      });
     }
   );
 }
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+if (serveOpts.transport === "http") {
+  // Stateful mode (session ID generated per connection). Tried stateless
+  // mode (sessionIdGenerator: undefined) first since it looked simpler on
+  // paper — it isn't actually usable for a real interactive MCP session:
+  // verified live that the SDK's own handleRequest() 500s on the
+  // `notifications/initialized` message that immediately follows
+  // `initialize` when there's no session to anchor it to. Stateful mode
+  // (confirmed working end-to-end against a real StreamableHTTPClientTransport)
+  // is the correct choice for a server that lists tools once and then
+  // serves many subsequent tool calls in the same logical session.
+  const { randomUUID } = await import("node:crypto");
+  const httpTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
+  await server.connect(httpTransport);
+
+  const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (!LOOPBACK_HOSTS.has(serveOpts.host)) {
+    console.error(
+      `[ay-api-gen] WARNING: binding to "${serveOpts.host}" exposes this MCP server beyond localhost. ` +
+      "This server has no built-in authentication — anyone who can reach this host:port can call every tool " +
+      "with whatever credentials are in this process's environment. Only bind beyond 127.0.0.1 if you understand " +
+      "that exposure (e.g. behind your own reverse proxy with auth already in front of it)."
+    );
+  }
+
+  const httpServer = createServer(async (req, res) => {
+    if (req.method !== "POST") {
+      await httpTransport.handleRequest(req, res);
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    let body;
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      body = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON body" }));
+      return;
+    }
+    await httpTransport.handleRequest(req, res, body);
+  });
+
+  await new Promise((resolvePromise, rejectPromise) => {
+    httpServer.once("error", rejectPromise);
+    httpServer.listen(serveOpts.port, serveOpts.host, () => {
+      console.error(`[ay-api-gen] MCP StreamableHTTP server listening on http://${serveOpts.host}:${serveOpts.port}/`);
+      resolvePromise();
+    });
+  });
+} else {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}

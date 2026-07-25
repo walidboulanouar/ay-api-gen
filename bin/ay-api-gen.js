@@ -11,9 +11,10 @@
  *   ay-api-gen --from-mcp <file> [options]       Generate OpenAPI spec from MCP tools
  */
 
-import { resolve, dirname } from "node:path";
-import { mkdirSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { resolve, dirname, sep } from "node:path";
+import { mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -46,6 +47,22 @@ function parseArgs(argv) {
       opts.maxTools = parseInt(argv[++i], 10);
     } else if (arg === "--verbose" || arg === "-v") {
       opts.verbose = true;
+    } else if (arg === "--force") {
+      opts.force = true;
+    } else if (arg === "--allow-host-override") {
+      opts.allowHostOverride = true;
+    } else if (arg === "--accept-risks") {
+      opts.acceptRisks = argv[++i];
+    } else if (arg === "--mode") {
+      opts.mode = argv[++i];
+    } else if (arg === "--baseline") {
+      opts.baseline = true;
+    } else if (arg === "--transport") {
+      opts.transport = argv[++i];
+    } else if (arg === "--port") {
+      opts.port = argv[++i];
+    } else if (arg === "--host") {
+      opts.host = argv[++i];
     } else if (!arg.startsWith("-")) {
       opts.positional.push(arg);
     }
@@ -61,10 +78,11 @@ COMMANDS
   ay-api-gen <spec-url-or-file> [options]     Generate MCP server + CLI
   ay-api-gen init                              Interactive setup wizard
   ay-api-gen discover <domain>                 Auto-find OpenAPI specs on a domain
-  ay-api-gen serve <spec>                      Start MCP server directly (no codegen)
+  ay-api-gen serve <spec> [--transport http]   Start MCP server directly (no codegen)
   ay-api-gen run <spec> <resource> <action>    Call API directly (no codegen)
   ay-api-gen list                              List all generated APIs
   ay-api-gen doctor                            Health check all registered APIs
+  ay-api-gen audit --baseline <spec>           Free T0 static security lint (no license needed)
   ay-api-gen diff <old-spec> <new-spec>        Compare two spec versions
   ay-api-gen remove <name>                     Remove a generated API from registry
   ay-api-gen regen [name|--all]                Regenerate from saved config
@@ -82,6 +100,14 @@ OPTIONS
   --token-budget <n>   Token budget for --slim (default: 8000)
   --max-tools <n>      Max tools for --slim (default: 50)
   --verbose, -v        Verbose output
+  --force              Overwrite colliding settings.json entries (see Security)
+  --allow-host-override  Allow API_BASE_URL to rebind to a different host
+  --accept-risks <ids> Comma-separated spec-linter findings to downgrade (mode b), e.g. T-API-1:POST_charge
+  --mode <a|b>         Spec-lint mode: a=warn-only (default), b=block on HIGH/CRITICAL
+  --transport <t>      serve: "stdio" (default) or "http" (StreamableHTTP)
+  --port <n>           serve --transport http: port to listen on (default 3000)
+  --host <addr>        serve --transport http: bind address (default 127.0.0.1 — binding
+                        beyond localhost has no built-in auth, logs a loud warning)
   --help, -h           Show this help
 
 EXAMPLES
@@ -100,6 +126,9 @@ EXAMPLES
   # Direct MCP server (no codegen, use in settings.json)
   ay-api-gen serve https://petstore.swagger.io/v2/swagger.json
 
+  # Direct MCP server over HTTP instead of stdio (localhost-only by default)
+  ay-api-gen serve https://petstore.swagger.io/v2/swagger.json --transport http --port 3000
+
   # Direct API call (no codegen)
   ay-api-gen run https://petstore.swagger.io/v2/swagger.json inventory list
 
@@ -117,6 +146,85 @@ function formatAuthTypes(securitySchemes) {
     if (s.type === "apiKey") return "API Key in " + s.in + ": " + s.paramName;
     return s.type;
   });
+}
+
+/**
+ * Normalize a candidate API name (spec-derived title OR an explicit --name
+ * flag) to a safe charset before it's used to build a filesystem path
+ * (default --output dir), an npm package name (generated package.json —
+ * T-GEN-2), and a registry/settings key.
+ *
+ * Previously only the spec-title-derived fallback went through this
+ * normalization; a raw `--name` value was used as-is. That's user-supplied
+ * (not spec-derived, so outside T-GEN-2's stated threat), but it still let
+ * a careless `--name ../../evil` produce a default output path outside the
+ * intended `.ay/apis/` tree, and an unnormalized value could produce an
+ * invalid npm package name. Applying the same sanitizer to both sources
+ * closes both gaps and gives the field one consistent safety guarantee
+ * regardless of where it came from.
+ */
+function sanitizeApiName(raw) {
+  const cleaned = String(raw || "")
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .toLowerCase()
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || "api";
+}
+
+// T-GEN-4: a small deny-list of absolute paths that have zero legitimate
+// use as an `--output` target for this tool. Unlike T-ING-2's private-IP
+// deny-list, there's no equivalent "legitimate intranet API" carve-out
+// here — nothing this tool generates ever belongs in /etc or a user's raw
+// home directory root — so this is an unconditional refusal, no override.
+//
+// Two tiers, deliberately: system directories block themselves AND
+// everything beneath them (nothing ever legitimately writes under /etc).
+// The home directory and "/" only block an EXACT match — most real
+// projects live somewhere under $HOME, so prefix-blocking it would reject
+// virtually all normal `--output` usage. Only dumping files directly into
+// the home root or filesystem root itself is the actual smell.
+//
+// Deliberately NOT included: /var. It looks like a system directory but
+// on macOS it's where the OS temp dir (os.tmpdir(), /var/folders/...)
+// actually lives — prefix-blocking it would reject completely ordinary
+// `--output /tmp/...`-style usage, not just genuine misuse.
+const DANGEROUS_OUTPUT_PREFIX_ROOTS = [
+  "/etc", "/usr", "/bin", "/sbin", "/boot", "/root",
+  "/System", "/Library", "/Applications", "/Windows",
+].map((p) => resolve(p));
+const DANGEROUS_OUTPUT_EXACT_ROOTS = [sep, homedir()].map((p) => resolve(p));
+
+/**
+ * T-GEN-4 — `--output`/`--name` ultimately resolve to a filesystem write
+ * target the user typed themselves (never spec-derived in any current call
+ * path — see HANDOFFS.md for the trace). The threat model rates this Low
+ * and explicitly says minimal mitigation is warranted for user-supplied
+ * input; this is a proportionate two-tier response:
+ *   - A small set of catastrophic, always-wrong targets (system roots, the
+ *     bare filesystem/home root) are refused outright — no flag overrides
+ *     this, there's no legitimate reason `ay-api-gen` output belongs there.
+ *   - Anything else outside the current working directory is allowed
+ *     (deliberately writing to a sibling project or an absolute path
+ *     elsewhere is a normal, supported use of `--output`) but gets a
+ *     visible warning so a typo'd `--output` isn't silently surprising.
+ * @param {string} resolvedPath - already-resolved absolute path
+ */
+function checkOutputPathSafety(resolvedPath) {
+  const isDangerous =
+    DANGEROUS_OUTPUT_EXACT_ROOTS.some((root) => resolvedPath === root) ||
+    DANGEROUS_OUTPUT_PREFIX_ROOTS.some((root) => resolvedPath === root || resolvedPath.startsWith(root + sep));
+
+  if (isDangerous) {
+    throw new Error(
+      `Refusing to write to "${resolvedPath}" — this looks like a system or home directory root, ` +
+      `never a legitimate ay-api-gen output target. Choose a project-scoped --output path.`
+    );
+  }
+  const cwd = resolve(process.cwd());
+  if (resolvedPath !== cwd && !resolvedPath.startsWith(cwd + sep)) {
+    console.log(`  warn: output directory is outside the current working directory: ${resolvedPath}`);
+  }
 }
 
 // ── Subcommands ──
@@ -146,7 +254,7 @@ async function cmdList() {
 
 async function cmdRemove(name) {
   const { unregisterAPI } = await import("../src/registry.js");
-  if (unregisterAPI(name)) {
+  if (await unregisterAPI(name)) {
     console.log(`Removed "${name}" from registry.`);
     console.log(`Note: Files in .ay/apis/${name}/ were NOT deleted. Remove manually if needed.`);
   } else {
@@ -176,9 +284,9 @@ async function cmdRegen(name, opts) {
   for (const api of toRegen) {
     console.log(`\nRegenerating: ${api.name} from ${api.source}`);
     await cmdGenerate(api.source, {
+      ...opts,
       name: api.name,
       output: api.outputDir,
-      noSettings: opts.noSettings,
     });
   }
 }
@@ -203,8 +311,9 @@ async function cmdReverse(opts) {
     baseUrl: process.env.API_BASE_URL,
   });
 
-  const outputPath = opts.output || "openapi-from-mcp.json";
-  writeFileSync(resolve(outputPath), JSON.stringify(spec, null, 2) + "\n", "utf-8");
+  const outputPath = resolve(opts.output || "openapi-from-mcp.json");
+  checkOutputPathSafety(outputPath);
+  writeFileSync(outputPath, JSON.stringify(spec, null, 2) + "\n", "utf-8");
   console.log(`OpenAPI spec written to: ${outputPath}`);
 }
 
@@ -216,6 +325,8 @@ async function cmdGenerate(source, opts) {
   const { generateEnvExample } = await import("../src/env-generator.js");
   const { injectSettings } = await import("../src/settings-injector.js");
   const { registerAPI } = await import("../src/registry.js");
+  const { assertHostAllowed } = await import("../src/url-guard.js");
+  const { lintSpec, printLintFindings, parseAcceptRisks } = await import("../src/spec-linter.js");
 
   console.log(`Parsing OpenAPI spec: ${source}`);
 
@@ -238,9 +349,27 @@ async function cmdGenerate(source, opts) {
   // Parse
   const parsed = extractEndpoints(spec);
 
-  const apiName = opts.name ||
-    parsed.info.title?.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().replace(/-+/g, "-") ||
-    "api";
+  // Refuse to generate a server pointed at a private/metadata IP (T-ING-2)
+  await assertHostAllowed(parsed.baseUrl);
+
+  // Spec-lint (T-API-1, T-API-2) — warn-only by default, blocking in --mode=b
+  const lintFindings = lintSpec(parsed);
+  if (lintFindings.length > 0) {
+    printLintFindings(lintFindings);
+    if (opts.mode === "b") {
+      const accepted = parseAcceptRisks(opts.acceptRisks);
+      const blocking = lintFindings.filter(f =>
+        (f.severity === "high" || f.severity === "critical") &&
+        !accepted.has(`${f.id}:${f.endpointSlug}`)
+      );
+      if (blocking.length > 0) {
+        console.error(`\n[spec-lint] ${blocking.length} blocking finding(s) in --mode=b. Pass --accept-risks=<id>:<endpoint-slug>,... to override.`);
+        process.exit(1);
+      }
+    }
+  }
+
+  const apiName = sanitizeApiName(opts.name || parsed.info.title);
 
   console.log(`API: ${parsed.info.title || apiName} (${parsed.endpoints.length} endpoints)`);
   console.log(`Base URL: ${parsed.baseUrl}`);
@@ -271,7 +400,15 @@ async function cmdGenerate(source, opts) {
 
   // Output directory
   const outputDir = resolve(opts.output || `.ay/apis/${apiName}`);
+  checkOutputPathSafety(outputDir);
   mkdirSync(outputDir, { recursive: true });
+
+  // Copy runtime security helpers into the output dir — the generated
+  // server and CLI are standalone and import these by relative path.
+  for (const helper of ["truncate.js", "desc-sanitize.js", "url-guard.js"]) {
+    const src = resolve(__dirname, "../src", helper);
+    writeFileSync(resolve(outputDir, helper), readFileSync(src, "utf-8"), "utf-8");
+  }
 
   // Generate MCP server
   const mcpSource = generateMCPServer(parsed, { name: apiName });
@@ -288,7 +425,9 @@ async function cmdGenerate(source, opts) {
   console.log(`CLI tool:   ${cliPath}`);
 
   // Generate .env.example
-  const envContent = generateEnvExample(parsed.securitySchemes, parsed.baseUrl, parsed.info);
+  const envContent = generateEnvExample(parsed.securitySchemes, parsed.baseUrl, parsed.info, {
+    allowHostOverride: opts.allowHostOverride,
+  });
   const envPath = resolve(outputDir, ".env.example");
   writeFileSync(envPath, envContent, "utf-8");
   console.log(`Env file:   ${envPath}`);
@@ -302,7 +441,7 @@ async function cmdGenerate(source, opts) {
       type: "module",
       private: true,
       dependencies: {
-        "@modelcontextprotocol/sdk": "^1.12.1",
+        "@modelcontextprotocol/sdk": "1.29.0",
       },
     }, null, 2) + "\n", "utf-8");
   }
@@ -321,7 +460,7 @@ async function cmdGenerate(source, opts) {
   }, null, 2) + "\n", "utf-8");
 
   // Register in API registry
-  registerAPI(apiName, {
+  await registerAPI(apiName, {
     source,
     baseUrl: parsed.baseUrl,
     outputDir,
@@ -331,9 +470,24 @@ async function cmdGenerate(source, opts) {
 
   // Auto-register in settings.json
   if (!opts.noSettings) {
-    const settingsPath = injectSettings(mcpPath, apiName);
-    console.log(`Settings:   ${settingsPath}`);
-    console.log(`  -> MCP server "${apiName}" registered.`);
+    try {
+      const nonInteractive = !process.stdout.isTTY || !process.stdin.isTTY;
+      const { settingsPath, key } = await injectSettings(mcpPath, apiName, {
+        force: opts.force,
+        nonInteractive,
+        confirmOverwrite: nonInteractive ? undefined : async (nsKey) => {
+          const { createInterface } = await import("node:readline");
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          const answer = await new Promise(res => rl.question(`"${nsKey}" already exists in settings.json. Overwrite? [y/N]: `, res));
+          rl.close();
+          return /^y(es)?$/i.test(answer.trim());
+        },
+      });
+      console.log(`Settings:   ${settingsPath}`);
+      console.log(`  -> MCP server "${key}" registered.`);
+    } catch (err) {
+      console.error(`Settings:   ${err.message}`);
+    }
   }
 
   // Print summary
@@ -391,9 +545,15 @@ async function main() {
     const config = await runInitWizard();
     if (config) {
       console.log(`\n  Generating ${config.name}...`);
-      // Write .env if auth was provided
+      // Write .env if auth was provided. Uses the same sanitizeApiName()
+      // as cmdGenerate's own outputDir computation below — previously this
+      // used raw config.name (unsanitized user input from the wizard's
+      // "API name" prompt), which could both land outside .ay/apis/
+      // (T-GEN-4) AND write the .env into a different directory than
+      // cmdGenerate ultimately generates the server into.
       if (Object.keys(config.envVars).length > 0) {
-        const outputDir = resolve(opts.output || `.ay/apis/${config.name}`);
+        const outputDir = resolve(opts.output || `.ay/apis/${sanitizeApiName(config.name)}`);
+        checkOutputPathSafety(outputDir);
         mkdirSync(outputDir, { recursive: true });
         const envLines = Object.entries(config.envVars).map(([k, v]) => `${k}=${v}`);
         writeFileSync(resolve(outputDir, ".env"), envLines.join("\n") + "\n", "utf-8");
@@ -434,6 +594,44 @@ async function main() {
     return;
   }
 
+  // Audit: free T0 static spec-lint baseline (ADR-010). No license, no network
+  // probing beyond fetching the spec itself, no code generation.
+  if (cmd === "audit") {
+    const specSource = opts.positional[1];
+    if (!specSource) { console.error("Usage: ay-api-gen audit --baseline <spec-url-or-file>"); process.exit(1); }
+
+    const { loadSpec, extractEndpoints } = await import("../src/parser.js");
+    const { lintSpec, printLintFindings, parseAcceptRisks } = await import("../src/spec-linter.js");
+
+    const spec = await loadSpec(specSource);
+    const parsed = extractEndpoints(spec);
+
+    console.log(`\nay-api-gen audit --baseline (T0 static analysis, free)\n`);
+    console.log(`  API: ${parsed.info.title || specSource} (${parsed.endpoints.length} endpoints)`);
+
+    const findings = lintSpec(parsed);
+    if (findings.length === 0) {
+      console.log(`\n  No T0 findings. ${parsed.endpoints.length} endpoint(s) checked.\n`);
+      return;
+    }
+
+    printLintFindings(findings);
+    console.log();
+
+    if (opts.mode === "b") {
+      const accepted = parseAcceptRisks(opts.acceptRisks);
+      const blocking = findings.filter(f =>
+        (f.severity === "high" || f.severity === "critical") &&
+        !accepted.has(`${f.id}:${f.endpointSlug}`)
+      );
+      if (blocking.length > 0) {
+        console.error(`[spec-lint] ${blocking.length} blocking finding(s) in --mode=b. Pass --accept-risks=<id>:<endpoint-slug>,... to override.`);
+        process.exit(1);
+      }
+    }
+    return;
+  }
+
   // Doctor: health check all registered APIs
   if (cmd === "doctor") {
     const { runDoctor, printDoctorResults } = await import("../src/doctor.js");
@@ -446,12 +644,16 @@ async function main() {
   // Runtime serve: start MCP server directly from spec (no codegen)
   if (cmd === "serve") {
     const specSource = opts.positional[1];
-    if (!specSource) { console.error("Usage: ay-api-gen serve <spec-url-or-file>"); process.exit(1); }
+    if (!specSource) { console.error("Usage: ay-api-gen serve <spec-url-or-file> [--transport stdio|http] [--port <n>] [--host <addr>]"); process.exit(1); }
     // Re-exec with the runtime MCP server
     const { execSync } = await import("node:child_process");
     const runtimePath = resolve(__dirname, "../src/runtime/mcp-server.js");
+    const runtimeArgs = [runtimePath, specSource];
+    if (opts.transport) runtimeArgs.push("--transport", opts.transport);
+    if (opts.port) runtimeArgs.push("--port", opts.port);
+    if (opts.host) runtimeArgs.push("--host", opts.host);
     try {
-      execSync(`node ${JSON.stringify(runtimePath)} ${JSON.stringify(specSource)}`, { stdio: "inherit" });
+      execSync(`node ${runtimeArgs.map(a => JSON.stringify(a)).join(" ")}`, { stdio: "inherit" });
     } catch { /* server exited */ }
     return;
   }

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ay-api-gen — Product Walkthrough Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e0e0e8; line-height: 1.6; padding: 2rem; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.25rem; color: #fff; }
+  .subtitle { color: #888; font-size: 0.95rem; margin-bottom: 1rem; }
+  .disclaimer { background: #1e1b34; border: 1px solid #3b3266; color: #a78bfa; font-size: 0.82rem; padding: 0.6rem 1rem; border-radius: 8px; margin-bottom: 2.5rem; display: inline-block; }
+  h2 { font-size: 1.3rem; font-weight: 600; color: #fff; margin: 2.5rem 0 0.35rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1e1e2e; }
+  .step-desc { color: #888; font-size: 0.9rem; margin-bottom: 1rem; }
+
+  .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .card-header .name { font-weight: 600; font-size: 1.05rem; color: #fff; }
+  .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge-connected { background: #0d3320; color: #4ade80; border: 1px solid #166534; }
+  .badge-missing { background: #3b1219; color: #f87171; border: 1px solid #7f1d1d; }
+  .badge-optional { background: #1e1b34; color: #a78bfa; border: 1px solid #3b3266; }
+  .badge-warn { background: #3b2a12; color: #fbbf24; border: 1px solid #7f5f1d; }
+
+  code { font-family: 'SF Mono', 'Fira Code', monospace; background: #1a1a28; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #a78bfa; }
+  a { color: #60a5fa; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .section-note { background: #1a1a28; border-left: 3px solid #60a5fa; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; font-size: 0.9rem; color: #999; }
+
+  /* Terminal window chrome */
+  .terminal { background: #0d0d14; border: 1px solid #1e1e2e; border-radius: 10px; overflow: hidden; margin: 1rem 0 1.75rem; box-shadow: 0 8px 30px rgba(0,0,0,0.45); }
+  .terminal-titlebar { background: #17171f; padding: 0.55rem 0.9rem; display: flex; align-items: center; gap: 0.5rem; border-bottom: 1px solid #1e1e2e; }
+  .terminal-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .dot-red { background: #f87171; }
+  .dot-yellow { background: #fbbf24; }
+  .dot-green { background: #4ade80; }
+  .terminal-title { flex: 1; text-align: center; font-size: 0.78rem; color: #666; font-family: 'SF Mono', 'Fira Code', monospace; margin-left: -2.5rem; }
+  .terminal-body { padding: 1rem 1.25rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.83rem; color: #c9c9d8; white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+
+  .prompt { color: #4ade80; }
+  .cmdtext { color: #fff; }
+  .dim { color: #5a5a6e; }
+  .cyan { color: #67e8f9; }
+  .blue { color: #60a5fa; }
+  .purple { color: #a78bfa; }
+  .yellow { color: #fbbf24; }
+  .green { color: #4ade80; }
+  .red { color: #f87171; }
+  .white { color: #f4f4f8; }
+  .bold { font-weight: 700; }
+  .cursor { display: inline-block; width: 7px; height: 15px; background: #4ade80; vertical-align: text-bottom; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #1e1b34; color: #a78bfa; border: 1px solid #3b3266; font-weight: 700; font-size: 0.85rem; margin-right: 0.6rem; flex-shrink: 0; }
+  .step-title-row { display: flex; align-items: center; }
+
+  .tool-grid { display: grid; grid-template-columns: 1fr; gap: 0.6rem; margin: 1rem 0; }
+  .tool-card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 10px; padding: 0.85rem 1.1rem; }
+  .tool-card .tname { font-family: 'SF Mono', 'Fira Code', monospace; color: #67e8f9; font-weight: 600; font-size: 0.9rem; }
+  .tool-card .tdesc { color: #999; font-size: 0.85rem; margin-top: 0.2rem; }
+  .tool-card .tparams { color: #666; font-size: 0.78rem; margin-top: 0.4rem; font-family: 'SF Mono', 'Fira Code', monospace; }
+  .tool-card .tparams .pname { color: #a78bfa; }
+  .tool-card .tparams .ptype { color: #4ade80; }
+
+  .finding { background: #12121a; border: 1px solid #1e1e2e; border-left-width: 4px; border-radius: 8px; padding: 0.7rem 1rem; margin-bottom: 0.6rem; }
+  .finding.high { border-left-color: #f87171; }
+  .finding.medium { border-left-color: #fbbf24; }
+  .finding-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+  .sev-pill { font-size: 0.68rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; letter-spacing: 0.4px; }
+  .sev-high { background: #3b1219; color: #f87171; border: 1px solid #7f1d1d; }
+  .sev-medium { background: #3b2a12; color: #fbbf24; border: 1px solid #7f5f1d; }
+  .finding-id { font-family: 'SF Mono', monospace; font-size: 0.78rem; color: #666; }
+  .finding-msg { font-size: 0.88rem; color: #e0e0e8; }
+  .finding-rem { font-size: 0.8rem; color: #666; margin-top: 0.2rem; }
+  .finding-rem .arrow { color: #444; }
+
+  .flow-nav { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 2rem; }
+  .flow-nav a { background: #12121a; border: 1px solid #1e1e2e; color: #999; font-size: 0.78rem; padding: 0.4rem 0.8rem; border-radius: 99px; }
+  .flow-nav a:hover { border-color: #3b3266; color: #a78bfa; text-decoration: none; }
+
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #1e1e2e; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>ay-api-gen</h1>
+<p class="subtitle">Product Walkthrough — from an OpenAPI spec to a secured, auto-registered MCP server</p>
+<span class="disclaimer">Visual review artifact — static mockup, no live execution. Terminal output and code shown are illustrative, not captured from a real run.</span>
+
+<div class="flow-nav">
+  <a href="#step1">① init wizard</a>
+  <a href="#step2">② discover &amp; parse</a>
+  <a href="#step3">③ generate</a>
+  <a href="#step4">④ tool list seen by the LLM</a>
+  <a href="#step5">⑤ security audit</a>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="step1"><span class="step-title-row"><span class="step-badge">1</span>Init Wizard</span></h2>
+<p class="step-desc">A developer runs <code>ay-api-gen init</code> against their internal billing API. No config files, no manifest to hand-write — the wizard drives spec source, auth detection, and env setup interactively.</p>
+
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">walid@dev — zsh — ay-api-gen init</span>
+  </div>
+  <div class="terminal-body"><span class="prompt">$</span> <span class="cmdtext">npx ay-api-gen init</span>
+
+ay-api-gen init — Connect any API to Claude Code
+
+  How do you want to provide the API spec?
+  1) URL to OpenAPI/Swagger spec
+  2) Local file path
+  3) Auto-discover from domain
+  Choice [1]: <span class="white">1</span>
+  Spec URL: <span class="white">https://billing.internal.acme.com/openapi.json</span>
+
+  Loading spec: https://billing.internal.acme.com/openapi.json
+  API: Acme Billing API (14 endpoints)
+  Base URL: https://billing.internal.acme.com/v2
+
+  API name [acme-billing-api]: <span class="white"><span class="cursor"></span></span>
+
+  Detected auth:
+    - Bearer token
+  API_KEY or Bearer token (or press Enter to skip): <span class="dim">••••••••••••••••</span>
+
+  <span class="green">✓</span> Wrote .env (acme-billing-api/.env)
+  <span class="green">✓</span> Wrote .env.example (auth docs, no secrets)
+  <span class="dim">Ready to generate. Run:</span> <span class="cyan">ay-api-gen generate acme-billing-api</span></div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="step2"><span class="step-title-row"><span class="step-badge">2</span>Discover &amp; Parse the Spec</span></h2>
+<p class="step-desc">Behind the scenes, the parser resolves <code>$ref</code>s, normalizes Swagger 2.0/OpenAPI 3.0/3.1 into one internal model, and detects auth — no manual spec cleanup needed.</p>
+
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">walid@dev — zsh — parsing openapi.json</span>
+  </div>
+  <div class="terminal-body"><span class="dim">[parser]</span> loading spec... <span class="green">OpenAPI 3.1.0</span> detected
+<span class="dim">[parser]</span> resolving $ref chain... 22 schemas, 3 nested $refs, 1 components.pathItems $ref
+<span class="dim">[parser]</span> normalizing nullable fields (3.1 <code style="background:none;padding:0;color:#67e8f9;">type: [string, null]</code> form)... ok
+<span class="dim">[parser]</span> extracting endpoints...
+
+  <span class="bold white">14 endpoints found:</span>
+  <span class="blue">GET</span>    /invoices                 list_invoices
+  <span class="blue">GET</span>    /invoices/{id}             get_invoice
+  <span class="yellow">POST</span>   /invoices                 create_invoice
+  <span class="purple">PATCH</span>  /invoices/{id}             update_invoice
+  <span class="red">DELETE</span> /invoices/{id}             delete_invoice
+  <span class="blue">GET</span>    /customers/{id}/balance    get_customer_balance
+  <span class="yellow">POST</span>   /customers/{id}/charge     charge_customer
+  <span class="dim">... 7 more</span>
+
+<span class="dim">[parser]</span> auth scheme: <span class="green">http bearer</span> (global security requirement)
+<span class="dim">[parser]</span> base URL: <span class="cyan">https://billing.internal.acme.com/v2</span> <span class="dim">(same-host refinement applied)</span>
+
+<span class="green">✓</span> Spec valid. 0 errors, 0 warnings.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="step3"><span class="step-title-row"><span class="step-badge">3</span>Generate the MCP Server</span></h2>
+<p class="step-desc"><code>ay-api-gen generate</code> emits a standalone, installable MCP server — Zod-validated tool schemas, auth wiring, and the security guards (SSRF host-checks, description sanitization, response truncation) baked in by default, not bolted on after.</p>
+
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">walid@dev — zsh — ay-api-gen generate</span>
+  </div>
+  <div class="terminal-body"><span class="prompt">$</span> <span class="cmdtext">ay-api-gen generate acme-billing-api</span>
+
+<span class="dim">[generate]</span> writing acme-billing-api/
+  <span class="green">✓</span> src/server.js              <span class="dim">(MCP server, 14 tools)</span>
+  <span class="green">✓</span> src/schemas.js             <span class="dim">(Zod request/response validation)</span>
+  <span class="green">✓</span> src/auth.js                <span class="dim">(bearer token from ACME_API_KEY)</span>
+  <span class="green">✓</span> src/url-guard.js           <span class="dim">(same-host + private-IP deny-list)</span>
+  <span class="green">✓</span> src/desc-sanitize.js       <span class="dim">(500-char cap, untrusted marker)</span>
+  <span class="green">✓</span> package.json               <span class="dim">(@modelcontextprotocol/sdk pinned exact)</span>
+  <span class="green">✓</span> .env.example
+  <span class="green">✓</span> README.md
+
+<span class="dim">[generate]</span> installing dependencies... <span class="green">done</span> (3 packages)
+<span class="dim">[settings]</span> registering in .claude/settings.local.json under <span class="cyan">ay-api-gen:acme-billing-api</span>
+
+<span class="green bold">✓ Generated acme-billing-api — 14 tools, ready for Claude Code</span>
+
+<span class="dim">Restart Claude Code (or run /mcp) to pick up the new server.</span></div>
+</div>
+
+<div class="section-note">Generated file preview — <code>src/schemas.js</code> (excerpt):</div>
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">acme-billing-api/src/schemas.js</span>
+  </div>
+  <div class="terminal-body"><span class="dim">// Auto-generated by ay-api-gen — do not edit by hand</span>
+<span class="purple">import</span> { z } <span class="purple">from</span> <span class="green">"zod"</span>;
+
+<span class="purple">export const</span> chargeCustomerSchema = z.object({
+  id: z.string().describe(<span class="green">"Customer ID"</span>),
+  amount_cents: z.number().int().positive()
+    .describe(<span class="green">"Amount to charge, in cents"</span>),
+  currency: z.string().length(<span class="cyan">3</span>).default(<span class="green">"usd"</span>),
+  idempotency_key: z.string().optional()
+    .describe(<span class="green">"--- begin/end API param (untrusted) --- Client-supplied idempotency key"</span>),
+});</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="step4"><span class="step-title-row"><span class="step-badge">4</span>What the LLM Sees</span></h2>
+<p class="step-desc">Once registered, Claude Code lists the generated server's tools like any other MCP server. Descriptions are sanitized and length-capped before they ever reach a prompt.</p>
+
+<div class="tool-grid">
+  <div class="tool-card">
+    <div class="tname">list_invoices</div>
+    <div class="tdesc">List invoices for the authenticated account, optionally filtered by status and date range.</div>
+    <div class="tparams">status<span class="ptype">?: enum</span> · from<span class="ptype">?: string</span> · to<span class="ptype">?: string</span> · limit<span class="ptype">?: number</span></div>
+  </div>
+  <div class="tool-card">
+    <div class="tname">get_invoice</div>
+    <div class="tdesc">Fetch a single invoice by ID.</div>
+    <div class="tparams"><span class="pname">id</span><span class="ptype">: string</span></div>
+  </div>
+  <div class="tool-card">
+    <div class="tname">charge_customer</div>
+    <div class="tdesc">Charge a customer's default payment method for the given amount.</div>
+    <div class="tparams"><span class="pname">id</span><span class="ptype">: string</span> · <span class="pname">amount_cents</span><span class="ptype">: number</span> · currency<span class="ptype">?: string</span> · idempotency_key<span class="ptype">?: string</span></div>
+  </div>
+  <div class="tool-card">
+    <div class="tname">get_customer_balance</div>
+    <div class="tdesc">Get a customer's current outstanding balance.</div>
+    <div class="tparams"><span class="pname">id</span><span class="ptype">: string</span></div>
+  </div>
+  <div class="tool-card" style="opacity:0.6;">
+    <div class="tname">... 10 more tools</div>
+    <div class="tdesc">update_invoice, delete_invoice, list_customers, refund_payment, and 6 others.</div>
+  </div>
+</div>
+
+<div class="section-note">A live tool call, over stdio, as Claude Code would show it in the transcript:</div>
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">MCP · acme-billing-api · tools/call</span>
+  </div>
+  <div class="terminal-body"><span class="dim">→ tool_call</span> <span class="cyan">get_customer_balance</span>({ <span class="pname" style="color:#a78bfa;">id</span>: <span class="green">"cus_8f2a1c"</span> })
+
+<span class="dim">← result</span>
+--- begin API response (untrusted) ---
+{
+  "customer_id": "cus_8f2a1c",
+  "balance_cents": 184200,
+  "currency": "usd",
+  "past_due": false
+}
+--- end API response (untrusted) ---
+<span class="dim">(1.2 KB, under truncation cap — full response returned)</span></div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="step5"><span class="step-title-row"><span class="step-badge">5</span>Security / Audit Output</span></h2>
+<p class="step-desc">Before ever generating a server, <code>ay-api-gen audit --baseline</code> statically lints the spec itself — no credentials, no network calls to the target API, free T0 tier. This is the differentiator: most generators skip straight to codegen.</p>
+
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">walid@dev — zsh — ay-api-gen audit --baseline</span>
+  </div>
+  <div class="terminal-body"><span class="prompt">$</span> <span class="cmdtext">ay-api-gen audit --baseline openapi.json</span>
+
+ay-api-gen audit --baseline (T0 static analysis, free)
+
+  API: Acme Billing API (14 endpoints)
+
+<span class="dim">[spec-lint]</span> 4 finding(s):
+  <span class="sev-pill sev-high">HIGH</span>  T-API-3  POST /customers/{id}/charge   request body field "amount_cents" gates monetary value and is not marked readOnly
+                        <span class="arrow dim">→</span> <span class="dim">mark server-computed fields readOnly:true, or validate server-side before charging</span>
+  <span class="sev-pill sev-high">HIGH</span>  T-API-2  GET  /customers/{id}/balance      path parameter "id" resembles a sensitive/PII identifier
+                        <span class="arrow dim">→</span> <span class="dim">confirm this ID is opaque and not derived from SSN/account-number, or scope access via auth</span>
+  <span class="sev-pill sev-medium">MED</span>  T-API-1  DELETE /invoices/{id}            mutating endpoint has no per-operation security requirement (relies on global only)
+                        <span class="arrow dim">→</span> <span class="dim">verify the global security scheme actually applies here; declare explicitly if unsure</span>
+  <span class="sev-pill sev-medium">MED</span>  T-API-5  *    (spec-wide)                  globally-declared auth scheme is optional (security: [] present alongside bearer)
+                        <span class="arrow dim">→</span> <span class="dim">remove the empty security override unless anonymous access is intentional</span>
+
+<span class="dim">0 CRITICAL, 2 HIGH, 2 MEDIUM — mode=a (warn-only), generation not blocked.</span>
+<span class="dim">Re-run with --mode=b to block generation on HIGH/CRITICAL until --accept-risks is set.</span></div>
+</div>
+
+<div class="finding high">
+  <div class="finding-head"><span class="sev-pill sev-high">HIGH</span><span class="finding-id">T-API-3 · mass-assignment heuristic</span></div>
+  <div class="finding-msg"><code>POST /customers/{id}/charge</code> — request body field <code>amount_cents</code> gates monetary value and is not marked <code>readOnly</code>.</div>
+  <div class="finding-rem"><span class="arrow">→</span> Mark server-computed fields <code>readOnly: true</code> in the spec, or validate server-side before charging.</div>
+</div>
+<div class="finding high">
+  <div class="finding-head"><span class="sev-pill sev-high">HIGH</span><span class="finding-id">T-API-2 · sensitive path parameter</span></div>
+  <div class="finding-msg"><code>GET /customers/{id}/balance</code> — path parameter <code>id</code> resembles a sensitive/PII identifier.</div>
+  <div class="finding-rem"><span class="arrow">→</span> Confirm this ID is opaque and not derived from SSN/account-number, or scope access via auth.</div>
+</div>
+<div class="finding medium">
+  <div class="finding-head"><span class="sev-pill sev-medium">MED</span><span class="finding-id">T-API-1 · unauthenticated mutating endpoint</span></div>
+  <div class="finding-msg"><code>DELETE /invoices/{id}</code> — mutating endpoint has no per-operation security requirement.</div>
+  <div class="finding-rem"><span class="arrow">→</span> Verify the global security scheme actually applies here; declare explicitly if unsure.</div>
+</div>
+
+<div class="section-note">Same audit, run in <code>--mode=b</code> (enforced) with an unacknowledged HIGH finding — generation is blocked, not just warned:</div>
+<div class="terminal">
+  <div class="terminal-titlebar">
+    <span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span>
+    <span class="terminal-title">walid@dev — zsh — ay-api-gen generate --mode=b</span>
+  </div>
+  <div class="terminal-body"><span class="prompt">$</span> <span class="cmdtext">ay-api-gen generate acme-billing-api --mode=b</span>
+
+<span class="dim">[spec-lint]</span> 4 finding(s) <span class="dim">(see audit output above)</span>
+
+<span class="red">[spec-lint] 2 blocking finding(s) in --mode=b. Pass --accept-risks=&lt;id&gt;:&lt;endpoint-slug&gt;,... to override.</span>
+<span class="dim">exit code 1</span></div>
+</div>
+
+<!-- ============================================================ -->
+<h2>Summary</h2>
+<div class="card">
+  <div class="card-header"><span class="name">End-to-end flow</span><span class="badge badge-connected">init → discover/parse → generate → live in Claude Code → audited</span></div>
+  <p style="font-size:0.9rem;color:#999;">One CLI, zero manifest-writing, security checks that run before codegen rather than after a breach. This mockup mirrors the real command surface (<code>init</code>, <code>generate</code>, <code>serve</code>, <code>audit --baseline</code>) documented in README.md and exercised by the 151 unit + 119 integration tests in this repo — it does not invoke any of them live.</p>
+</div>
+
+<footer>
+  Visual mockup generated for internal review &mdash; ay-api-gen, 2026-07-25 &mdash; not shippable code, no live execution
+</footer>
+
+</body>
+</html>

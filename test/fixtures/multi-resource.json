@@ -1,0 +1,27 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Multi Resource Fixture", "version": "1.0.0" },
+  "servers": [{ "url": "https://8.8.8.8" }],
+  "paths": {
+    "/users": {
+      "get": { "operationId": "listUsers", "summary": "List users", "tags": ["users"], "responses": { "200": { "description": "ok" } } },
+      "post": { "operationId": "createUser", "summary": "Create user", "tags": ["users"], "responses": { "200": { "description": "ok" } } }
+    },
+    "/users/{id}": {
+      "get": { "operationId": "getUser", "summary": "Get user", "tags": ["users"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
+    },
+    "/billing/invoices": {
+      "get": { "operationId": "listInvoices", "summary": "List invoices", "tags": ["billing"], "responses": { "200": { "description": "ok" } } },
+      "post": { "operationId": "createInvoice", "summary": "Create invoice", "tags": ["billing"], "responses": { "200": { "description": "ok" } } }
+    },
+    "/billing/charge": {
+      "post": { "operationId": "chargeCard", "summary": "Charge a card", "tags": ["billing"], "responses": { "200": { "description": "ok" } } }
+    },
+    "/admin/stats": {
+      "get": { "operationId": "getAdminStats", "summary": "Admin stats (deprecated)", "tags": ["admin"], "description": "Deprecated in favor of /v2/admin/stats", "responses": { "200": { "description": "ok" } } }
+    },
+    "/admin/users/{id}": {
+      "delete": { "operationId": "deleteAdminUser", "summary": "Delete a user (admin)", "tags": ["admin"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
+    }
+  }
+}

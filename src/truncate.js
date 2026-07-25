@@ -55,14 +55,36 @@ export function truncateResponse(data, opts = {}) {
   // Object responses: check serialized size
   const serialized = JSON.stringify(data);
   if (serialized.length > maxChars) {
-    // Try to keep the structure but truncate deep values
+    // Naively re-parsing a sliced JSON string produces invalid JSON in the
+    // general case, so keep the truncated text as a string preview rather
+    // than trying to reconstruct a well-formed object.
     return {
       _truncated: true,
       _originalSize: serialized.length,
       _note: `Response truncated from ${serialized.length} chars to ~${maxChars}`,
-      data: JSON.parse(serialized.slice(0, maxChars).replace(/[^}]*$/, "}}") || "{}"),
+      _preview: serialized.slice(0, maxChars),
     };
   }
 
   return data;
+}
+
+/**
+ * Wrap a truncated API response into an MCP tool-result content array with
+ * boundary markers. The markers give the model an anchor to discount
+ * anything in the response body that reads like an instruction (T-RUN-4);
+ * the truncation itself caps token-cost DoS (T-RUN-6).
+ * @param {any} data - raw API response
+ * @param {object} opts - { maxChars, maxItems }
+ */
+export function asMcpContent(data, opts = {}) {
+  const truncated = truncateResponse(data, opts);
+  const json = JSON.stringify(truncated, null, 2);
+  return {
+    content: [
+      { type: "text", text: "--- begin API response (untrusted) ---" },
+      { type: "text", text: json },
+      { type: "text", text: "--- end API response ---" },
+    ],
+  };
 }

@@ -1,0 +1,100 @@
+{
+  "apis": {
+    "petstore": {
+      "source": "https://petstore.swagger.io/v2/swagger.json",
+      "baseUrl": "https://petstore.swagger.io/v2",
+      "outputDir": "/tmp/ay-npx-test2/petstore",
+      "endpointCount": 20,
+      "authTypes": [
+        "API Key in header: api_key",
+        "OAuth2 (implicit)"
+      ],
+      "generatedAt": "2026-05-10T17:42:45.469Z"
+    },
+    "petstore-test": {
+      "source": "https://petstore.swagger.io/v2/swagger.json",
+      "baseUrl": "https://petstore.swagger.io/v2",
+      "outputDir": "/tmp/petstore-verify",
+      "endpointCount": 20,
+      "authTypes": [
+        "API Key in header: api_key",
+        "OAuth2 (implicit)"
+      ],
+      "generatedAt": "2026-05-10T20:47:12.126Z"
+    },
+    "petstore-e2e": {
+      "source": "https://petstore.swagger.io/v2/swagger.json",
+      "baseUrl": "https://petstore.swagger.io/v2",
+      "outputDir": "/tmp/petstore-e2e",
+      "endpointCount": 20,
+      "authTypes": [
+        "API Key in header: api_key",
+        "OAuth2 (implicit)"
+      ],
+      "generatedAt": "2026-05-10T22:03:39.570Z"
+    },
+    "httpbin": {
+      "source": "https://httpbin.org/spec.json",
+      "baseUrl": "https://httpbin.org/",
+      "outputDir": "/tmp/httpbin-test2",
+      "endpointCount": 73,
+      "authTypes": [
+        "none"
+      ],
+      "generatedAt": "2026-05-10T22:05:07.155Z"
+    },
+    "petstore3": {
+      "source": "https://petstore3.swagger.io/api/v3/openapi.json",
+      "baseUrl": "https://petstore3.swagger.io/api/v3",
+      "outputDir": "/tmp/petstore3-test",
+      "endpointCount": 19,
+      "authTypes": [
+        "OAuth2 (implicit)",
+        "API Key in header: api_key"
+      ],
+      "generatedAt": "2026-05-10T22:05:38.935Z"
+    },
+    "filter-test": {
+      "source": "https://petstore.swagger.io/v2/swagger.json",
+      "baseUrl": "https://petstore.swagger.io/v2",
+      "outputDir": "/tmp/filter-test",
+      "endpointCount": 8,
+      "authTypes": [
+        "API Key in header: api_key",
+        "OAuth2 (implicit)"
+      ],
+      "generatedAt": "2026-05-11T13:10:19.337Z"
+    },
+    "filter-test2": {
+      "source": "https://petstore.swagger.io/v2/swagger.json",
+      "baseUrl": "https://petstore.swagger.io/v2",
+      "outputDir": "/tmp/filter-test2",
+      "endpointCount": 8,
+      "authTypes": [
+        "API Key in header: api_key",
+        "OAuth2 (implicit)"
+      ],
+      "generatedAt": "2026-05-11T13:10:22.541Z"
+    },
+    "slim-test": {
+      "source": "https://httpbin.org/spec.json",
+      "baseUrl": "https://httpbin.org/",
+      "outputDir": "/tmp/slim-test",
+      "endpointCount": 10,
+      "authTypes": [
+        "none"
+      ],
+      "generatedAt": "2026-05-11T13:10:24.571Z"
+    },
+    "yaml-test": {
+      "source": "/tmp/test-spec.yaml",
+      "baseUrl": "https://api.yamltest.com",
+      "outputDir": "/tmp/yaml-test",
+      "endpointCount": 3,
+      "authTypes": [
+        "none"
+      ],
+      "generatedAt": "2026-05-11T13:10:41.099Z"
+    }
+  }
+}
