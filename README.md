@@ -202,11 +202,23 @@ unrequested default would be a surprising behavior change:
 
 ## Supported specs
 
-- Swagger 2.0 (JSON)
-- OpenAPI 3.0.x (JSON)
-- OpenAPI 3.1.x (JSON)
+- Swagger 2.0
+- OpenAPI 3.0.x
+- OpenAPI 3.1.x — including the JSON Schema 2020-12 `nullable` migration (both
+  3.1's `type: ["string", "null"]` and legacy `nullable: true` are recognized —
+  real-world specs mix both conventions even under a 3.1 header), whole-PathItem
+  `$ref`s via `components.pathItems`, and `webhooks` (parsed structurally but
+  never generated as callable tools — a webhook describes a request the API
+  sends *to* you, not one this tool can call *on* the API; `ay-api-gen`
+  generates outbound-calling tools, so there's nothing sensible to generate
+  from them, but you'll get a clear message rather than silent data loss)
+- JSON or YAML, both formats, no separate conversion step needed
 
-YAML specs: convert first with `npx js-yaml spec.yaml > spec.json`.
+Not implemented, because nothing in this codebase currently reads them (no
+existing behavior to fix): `exclusiveMinimum`/`exclusiveMaximum`'s
+boolean-vs-numeric form change, `examples` (plural) vs `example`, and `$ref`
+sibling-keyword semantics — the last of these is genuinely contested within
+the JSON Schema/OpenAPI community, not just unimplemented here.
 
 ## Multi-API setup
 

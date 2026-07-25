@@ -13,10 +13,12 @@
 | Source delta (S1 → S2 hardening) | 0 new src files, 5 modified (`auth-codegen.js`, `env-generator.js`, `settings-injector.js`, `cli-generator.js`, `bin/ay-api-gen.js`) | See CHANGELOG "Added (S2 sprint)" |
 | Source delta (S2 → S3 locking + audits + yaml) | +1 file (`src/file-lock.js`), `src/yaml-parser.js` rewritten (custom parser → thin `yaml` wrapper), 4 modified (`settings-injector.js`, `registry.js`, `spec-linter.js`, `bin/ay-api-gen.js`) | See CHANGELOG "Added (S3 sprint)" |
 | Source delta (S3 → T-GEN-4 + backlog items) | +2 files (`response-cache.js`, `rate-limiter.js`), 2 modified (`bin/ay-api-gen.js`, `src/runtime/mcp-server.js`) | See CHANGELOG, latest entries |
+| Source delta (item 19, OpenAPI 3.1 support) | 0 new src files, 4 modified (`parser.js`, `validator.js`, `mcp-generator.js`, `runtime/mcp-server.js`) | See CHANGELOG, latest entry |
 | Test files | 5 (`run.js`, `integration-cli.js`, `edge-cases.json`, `fixtures/` — 3 files) | |
-| Tests passing | 129 / 129 in `test/run.js` + 105 / 105 in `test/integration-cli.js` | `node test/run.js` and `node test/integration-cli.js`, run 2026-07-25 |
+| Tests passing | 145 / 145 in `test/run.js` + 108 / 108 in `test/integration-cli.js` | `node test/run.js` and `node test/integration-cli.js`, run 2026-07-25 |
 | Test coverage of v0.1.1 CLI surface | **100%** of doctor/init/discover/diff/slim/filter now have real integration tests | `test/integration-cli.js`, closes B-04 |
 | Test coverage of S1+S2+S3 security fixes | 100% of S1's 7 tasks + S2's T-GEN-1/T-SET-2 findings + S3's B-09/T-GEN-2/T-API-3/T-GEN-4 have ≥1 regression test | `testSecurityHardening()`, `testGenInterpolationHardening()`, `testFileLock()` in `test/run.js`; `testConcurrentWriteLocking()`, `testGen2PackageJsonSafety()`, `testGen4OutputPathSafety()` in `test/integration-cli.js` |
+| OpenAPI 3.1 test coverage | 16 unit tests (`testOpenAPI31Support()` in `test/run.js`) + 1 real MCP-protocol end-to-end test (`testOpenAPI31RuntimeNullable()` in `test/integration-cli.js`), the latter verified to actually fail without the fix (temporarily reverted, confirmed the predicted Zod rejection, restored) | `test/run.js`, `test/integration-cli.js` |
 | Dependencies | 2 (`@modelcontextprotocol/sdk@1.29.0`, `yaml@2.9.0`), both exact-pinned, `yaml` has zero transitive deps | `npm ls`, `package.json` |
 | Doc files (docs/) | 4 (.md) + 2 root .md + 2 .html | ARCHITECTURE, PRIMITIVES, PATTERNS, DEPLOYMENT, README, CLAUDE.md, SETUP-REQUIREMENTS.html, STANDING.html |
 | Security doc files | 3 | THREAT-MODEL.md, ADR-006…, RFC-RESPONSES-walid.md |
@@ -90,6 +92,18 @@
 | Test rigor upgrade | Items 23/24 verified via a real MCP client/server protocol roundtrip (`@modelcontextprotocol/sdk`'s `Client` + `StdioClientTransport`), not just unit tests of the underlying primitives — a new, more rigorous pattern for future `runtime/mcp-server.js` features |
 | New tests | 18 (T-GEN-4) + 15 unit (response-cache.js, rate-limiter.js) + 7 real-protocol (items 23/24) |
 | Assessment | This is the natural stopping point — see PROGRESS-LOG.md |
+
+## Item 19: OpenAPI 3.1 full support (landed 2026-07-25)
+
+| Metric | Value |
+|--------|-------|
+| Goal | Take on the one non-blocked backlog item flagged in the prior wrap-up; research the real 3.0→3.1 diff rather than guess; close real gaps only |
+| Research method | 1 subagent, knowledge-only (no file access), prioritized-by-breakage-risk 3.0→3.1 diff, self-flagged confidence per item |
+| Real bugs fixed | `type` array (nullable) silently mismapping to a wrong Zod type in 3 switch sites, fixed at 1 source of truth; `$ref`'d PathItem silently dropping all its operations with no error (`components.pathItems`, new in 3.1) |
+| Deliberately not implemented | `exclusiveMinimum`/`exclusiveMaximum` numeric form, `examples` vs `example`, `$ref`-sibling semantics — none read anywhere in the codebase, no existing behavior to fix |
+| Design question resolved without stopping | Whether `webhooks` should become generated callable tools — research confirmed no (wrong direction: inbound vs outbound), so this was resolved on the merits, not treated as a blocking ambiguity |
+| New tests | 16 unit (`test/run.js`) + 1 real MCP-protocol end-to-end test, verified to fail without the fix before confirming it passes with it |
+| Blockers count | 0 |
 
 ## Tracking / process
 

@@ -4,6 +4,39 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: Item 19 (OpenAPI 3.1 full support) — the one non-blocked backlog item
+
+**Status: complete, no wall hit.** The prior session (below) flagged item 19 as "the most self-contained next candidate if another engineering-focused sprint is requested." It was requested, and it turned out to fit comfortably in one session — real but bounded scope, no design decision that needed a human call.
+
+### Approach
+
+Ran a research subagent in parallel with my own read of `src/parser.js` and the generator files. Gave it a knowledge-only task — the actual OpenAPI 3.1 spec text and JSON Schema 2020-12 diff versus 3.0, prioritized by what would actually break a parser written against 3.0 assumptions — rather than having it touch any project files, since the value here was expert spec knowledge, not code exploration I could do myself just as well. It came back with per-item confidence levels (e.g. explicitly lower confidence on `$ref`-sibling-keyword semantics, correctly flagging that as one of the genuinely contested corners of the spec even among implementers) — useful for deciding what NOT to build, not just what to build.
+
+### What I found and fixed
+
+1. **The real, actively-triggered bug**: 3.1 replaced 3.0's `nullable: true` with a `type` array (`["string", "null"]`). Every `switch (schema.type)` in this codebase (3 separate sites across `mcp-generator.js` and `runtime/mcp-server.js`) reads `type` expecting a single string — handed an array, JS's `switch` silently falls through to the `default` case with no error. Every nullable field in a 3.1-native spec was quietly getting the wrong Zod type. Fixed at one source of truth (`parser.js`'s `buildSchema()` now normalizes `type` arrays into `{ type: <primary>, nullable: true }`) so none of the three consuming switch sites needed touching — they were already correct once handed normalized input. Kept 3.0's legacy `nullable: true` form working unchanged too, since the research flagged (and I believe) that real-world specs mix both conventions even under a 3.1 header.
+2. **`components.pathItems`** (new in 3.1 — lets a whole PathItem be `$ref`'d, not just individual schemas). The generic `$ref` resolver already worked for this with zero changes; the actual gap was that the endpoint-extraction loop never checked whether a path entry was itself a bare `{ "$ref": ... }` before reading `.get`/`.post` off it — a `$ref`'d path was silently contributing zero endpoints, no error, nothing to suggest anything was wrong. Fixed.
+3. **`webhooks`** (new top-level field, structurally identical to `paths`). The real question wasn't parsing — it's whether webhook operations should become generated, callable tools. Research confirmed no: webhooks describe requests the API sends OUTBOUND to a URL the consumer registers separately; there's no URL for a generated tool to call, and "call this webhook" doesn't mean anything for a client-side codegen tool. This is the technically correct answer, not a judgment call I made up, so I didn't treat it as a blocking design ambiguity worth stopping for. Parsed structurally into a separate array (no data loss) but never merged into `endpoints`. `validateSpec()` now gives a specific, honest error for a webhooks-only spec instead of a generic "no paths defined," and an informational warning when a spec has both.
+4. **Deliberately not implemented**: `exclusiveMinimum`/`exclusiveMaximum`'s boolean→numeric form change, `examples` (plural) vs `example`, `$ref`-sibling semantics. Grepped first — none of these fields are read anywhere in the current codebase, so there's no existing behavior to fix. Building support for fields nothing consumes would be speculative scope, not gap-closing.
+
+### Verification
+
+Same rigor as the rest of this thread: 16 new unit tests plus one real MCP-protocol end-to-end test (spawned the actual `runtime/mcp-server.js`, called a tool with an explicit `null` argument for a nullable 3.1 param over the real protocol). Proved that test has teeth the same way as earlier in this thread: temporarily reverted the `.nullable()` fix, re-ran the isolated test, got exactly the predicted failure (`MCP error -32602: ... expected string, received null`), restored the fix, confirmed green.
+
+```bash
+node test/run.js              # 145/145
+node test/integration-cli.js  # 108/108
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same two pre-existing findings
+```
+
+Also fixed a stale doc bug noticed while updating the README: it still told users to convert YAML specs manually before use, a leftover from before S2's `yaml@2.9.0` migration gave this tool native YAML parsing.
+
+### What's left
+
+Nothing new — this doesn't change the prior session's assessment below. The board's remaining items (20, 21, C-01..C-07) are still blocked or underspecified for the same reasons documented there. If OpenAPI 3.1 validation-constraint codegen or example-based documentation ever becomes a feature, that's the point to revisit `exclusiveMinimum`/`examples` — not before.
+
+---
+
 ## 2026-07-25 — Session: T-GEN-4, backlog survey, items 23/24 — final wrap-up of the S1→S3 security-hardening thread
 
 **STOPPING POINT — read this before starting new work.** This closes out a full day of S1→S3 security-baseline work (see the three session entries below for the complete history). Everything left in `.ay/tracking/BOARD.md` that is concretely engineering-scoped and not blocked on a human decision has now been built. What remains is genuinely one of: (a) Walid/Luisa's own action items, (b) real infrastructure/credentials this session wasn't permitted to provision, or (c) product/security decisions that aren't mine to make unilaterally. Details below.

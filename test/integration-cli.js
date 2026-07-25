@@ -582,10 +582,73 @@ async function testRateLimiting() {
   }
 }
 
+// ── Item 19: OpenAPI 3.1 nullable params actually accepted at runtime, not just correct in generated source text ──
+async function testOpenAPI31RuntimeNullable() {
+  console.log("\n--- Integration: item 19 OpenAPI 3.1 nullable (real MCP protocol) ---");
+
+  let lastQueryString = null;
+  const spec = {
+    openapi: "3.1.0",
+    info: { title: "3.1 Nullable Runtime Test", version: "1.0.0" },
+    servers: [{ url: "PLACEHOLDER" }],
+    paths: {
+      "/widgets": {
+        get: {
+          operationId: "listWidgets",
+          summary: "List widgets",
+          parameters: [
+            { name: "category", in: "query", schema: { type: ["string", "null"] } },
+            { name: "count", in: "query", schema: { type: ["integer", "null"] } },
+          ],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(spec)); return; }
+    if (req.url.startsWith("/widgets")) {
+      lastQueryString = req.url.split("?")[1] || "";
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  spec.servers[0].url = `http://127.0.0.1:${port}`;
+
+  const transport = new StdioClientTransport({
+    command: "node",
+    args: [RUNTIME_MCP_SERVER_PATH, `http://127.0.0.1:${port}/openapi.json`],
+    env: { ...process.env, AY_ALLOW_PRIVATE_HOSTS: "1" },
+  });
+  const client = new Client({ name: "test-probe-3.1", version: "1.0.0" }, { capabilities: {} });
+
+  try {
+    await client.connect(transport);
+    // The MCP tool schema must accept an explicit null for a nullable
+    // 3.1 param — this proves the whole chain end to end: parser.js's
+    // normalization -> zodForParam()'s .nullable() -> the actual Zod
+    // schema the MCP SDK validates incoming tool-call arguments against.
+    // Before the fix, `type: ["string","null"]` silently fell through to
+    // z.string() with no .nullable(), so this exact call would have been
+    // rejected by Zod as a validation error.
+    const result = await client.callTool({ name: "list_widgets", arguments: { category: null, count: 5 } });
+    assert(!result.isError, `3.1 nullable (runtime): a tool call with an explicit null for a nullable param is accepted by the generated Zod schema, not rejected (isError=${result.isError})`);
+    assert(lastQueryString !== null && !lastQueryString.includes("category="), "3.1 nullable (runtime): a null value for an optional param is correctly omitted from the outgoing request, not sent as the literal string 'null'");
+    assert(lastQueryString.includes("count=5"), "3.1 nullable (runtime): a real (non-null) value for the same nullable param is still sent correctly");
+  } finally {
+    await client.close();
+    await new Promise((r) => server.close(r));
+  }
+}
+
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable];
   for (const t of tests) {
     try {
       await t();

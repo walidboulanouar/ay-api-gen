@@ -36,6 +36,9 @@ function buildToolInputSchema(endpoint) {
     if (param.schema?.enum) {
       properties[param.name].enum = param.schema.enum;
     }
+    if (param.schema?.nullable) {
+      properties[param.name].nullable = true;
+    }
     if (param.required) {
       required.push(param.name);
     }
@@ -49,6 +52,7 @@ function buildToolInputSchema(endpoint) {
         description: val.description || key,
       };
       if (val.enum) properties[key].enum = val.enum;
+      if (val.nullable) properties[key].nullable = true;
     }
     if (endpoint.requestBody.schema.required) {
       required.push(...endpoint.requestBody.schema.required);
@@ -219,6 +223,9 @@ ${toolDefs.map(tool => {
       }
       if (v.enum) {
         zod = `z.enum(${JSON.stringify(v.enum)})`;
+      }
+      if (v.nullable) {
+        zod += `.nullable()`;
       }
       if (v.description) {
         zod += `.describe(safeDescription(${JSON.stringify(v.description)}, "param"))`;

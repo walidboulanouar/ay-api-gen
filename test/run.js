@@ -725,6 +725,164 @@ async function testRateLimiter() {
   resetRateLimiter();
 }
 
+/**
+ * Item 19: OpenAPI 3.1 support.
+ *
+ * Scope decision (see PROGRESS-LOG.md for the full writeup): 3.1's most
+ * impactful, actively-triggered gap is `nullable` — 3.0's `nullable: true`
+ * became a `type` array (`["string", "null"]`) in 3.1's JSON-Schema-2020-12
+ * Schema Objects, and every `switch (schema.type)` in this codebase reads
+ * `type` expecting a string, silently falling through to a wrong default
+ * ("z.string()") when handed an array. Fixed at the single source of
+ * truth (parser.js's buildSchema()) so every consumer needed zero or
+ * minimal changes. Also closed: components.pathItems / webhooks $ref
+ * resolution (both new 3.1 constructs whose $ref target was previously
+ * never even attempted), and webhooks structural parsing (deliberately
+ * NOT turned into generated tools — see the code comment in parser.js for
+ * why that's the technically-correct choice, not just a punt).
+ * NOT implemented (research showed no current code reads these fields at
+ * all, so there's no existing behavior to fix): exclusiveMinimum/Maximum
+ * numeric-vs-boolean form, `examples` (plural) vs `example`, `$ref`
+ * sibling-keyword semantics (research flagged this as genuinely contested
+ * even within the spec community).
+ */
+async function testOpenAPI31Support() {
+  console.log("\n--- Item 19: OpenAPI 3.1 Support ---");
+
+  // ── nullable: array-valued `type` (the 3.1-native form) ──
+  const nullableArraySpec = {
+    openapi: "3.1.0",
+    info: { title: "3.1 Nullable Test", version: "1.0.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: {
+      "/widgets": {
+        get: {
+          operationId: "listWidgets",
+          summary: "List widgets",
+          parameters: [
+            { name: "category", in: "query", schema: { type: ["string", "null"] } },
+            { name: "limit", in: "query", schema: { type: ["integer", "null"] } },
+          ],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  };
+  const nullableArrayParsed = extractEndpoints(nullableArraySpec);
+  const categoryParam = nullableArrayParsed.endpoints[0].parameters.find(p => p.name === "category");
+  const limitParam = nullableArrayParsed.endpoints[0].parameters.find(p => p.name === "limit");
+  assert(categoryParam.schema.type === "string", `3.1 nullable: type:["string","null"] normalizes to a plain string type (got ${JSON.stringify(categoryParam.schema.type)})`);
+  assert(categoryParam.schema.nullable === true, "3.1 nullable: type:[\"string\",\"null\"] sets schema.nullable = true");
+  assert(limitParam.schema.type === "integer", `3.1 nullable: type:["integer","null"] normalizes to a plain integer type, not silently lost (got ${JSON.stringify(limitParam.schema.type)})`);
+  assert(limitParam.schema.nullable === true, "3.1 nullable: type:[\"integer\",\"null\"] sets schema.nullable = true");
+
+  // ── nullable: legacy `nullable: true` form must still work (real-world specs mix conventions even under a 3.1 header) ──
+  const nullableLegacySpec = {
+    ...nullableArraySpec,
+    paths: {
+      "/widgets": {
+        get: {
+          operationId: "listWidgets",
+          summary: "List widgets",
+          parameters: [{ name: "category", in: "query", schema: { type: "string", nullable: true } }],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  };
+  const nullableLegacyParsed = extractEndpoints(nullableLegacySpec);
+  const legacyParam = nullableLegacyParsed.endpoints[0].parameters[0];
+  assert(legacyParam.schema.type === "string" && legacyParam.schema.nullable === true, "3.1 nullable: legacy 3.0-style {type:'string',nullable:true} still normalizes correctly (mixed-convention specs are common in the wild)");
+
+  // ── nullable flows through to generated Zod code as .nullable(), not silently z.string() ──
+  const nullableMcpSrc = generateMCPServer(nullableArrayParsed, { name: "nullable-test" });
+  assert(nullableMcpSrc.includes("z.coerce.number()") && /z\.coerce\.number\(\)[^,\n]*\.nullable\(\)/.test(nullableMcpSrc), "3.1 nullable: generated server maps a nullable integer param to z.coerce.number().nullable(), not a wrong-type fallback");
+  assert(/z\.string\(\)[^,\n]*\.nullable\(\)/.test(nullableMcpSrc), "3.1 nullable: generated server maps a nullable string param to z.string().nullable()");
+
+  // ── nullable request-body property (not just parameters) ──
+  const nullableBodySpec = {
+    openapi: "3.1.0",
+    info: { title: "3.1 Nullable Body Test", version: "1.0.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: {
+      "/widgets": {
+        post: {
+          operationId: "createWidget",
+          summary: "Create widget",
+          requestBody: {
+            content: { "application/json": { schema: { type: "object", properties: {
+              name: { type: "string" },
+              parentId: { type: ["string", "null"] },
+            } } } },
+          },
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  };
+  const nullableBodyParsed = extractEndpoints(nullableBodySpec);
+  const parentIdProp = nullableBodyParsed.endpoints[0].requestBody.schema.properties.parentId;
+  assert(parentIdProp.type === "string" && parentIdProp.nullable === true, "3.1 nullable: a nullable request-body property normalizes the same way as a nullable parameter");
+
+  // ── components.pathItems: whole-PathItem $ref from `paths` ──
+  const pathItemsSpec = {
+    openapi: "3.1.0",
+    info: { title: "3.1 pathItems Test", version: "1.0.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: {
+      "/widgets": { $ref: "#/components/pathItems/WidgetPath" },
+    },
+    components: {
+      pathItems: {
+        WidgetPath: {
+          get: { operationId: "listWidgets", summary: "List widgets", responses: { "200": { description: "ok" } } },
+        },
+      },
+    },
+  };
+  const pathItemsParsed = extractEndpoints(pathItemsSpec);
+  assert(pathItemsParsed.endpoints.length === 1 && pathItemsParsed.endpoints[0].toolName === "list_widgets", "3.1 pathItems: a whole-PathItem $ref in `paths` resolves and its operations are extracted (previously silently dropped — pathItem.get was undefined on the raw {$ref} object)");
+
+  // ── webhooks: parsed structurally, NOT turned into callable tools ──
+  const webhooksSpec = {
+    openapi: "3.1.0",
+    info: { title: "3.1 Webhooks Test", version: "1.0.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: {
+      "/widgets": { get: { operationId: "listWidgets", summary: "List widgets", responses: { "200": { description: "ok" } } } },
+    },
+    webhooks: {
+      widgetCreated: {
+        post: { operationId: "widgetCreatedWebhook", summary: "Fired when a widget is created", responses: { "200": { description: "ack" } } },
+      },
+    },
+  };
+  const webhooksParsed = extractEndpoints(webhooksSpec);
+  assert(webhooksParsed.endpoints.length === 1 && webhooksParsed.endpoints.every(e => e.toolName !== "widget_created_webhook"), "3.1 webhooks: webhook operations are NOT added to endpoints (never become callable tools)");
+  assert(webhooksParsed.webhooks.length === 1 && webhooksParsed.webhooks[0].name === "widgetCreated" && webhooksParsed.webhooks[0].method === "POST", "3.1 webhooks: webhook operations ARE captured structurally in the separate `webhooks` array");
+
+  // ── webhooks via components.pathItems $ref too ──
+  const webhooksRefSpec = {
+    ...webhooksSpec,
+    webhooks: { widgetCreated: { $ref: "#/components/pathItems/WidgetCreatedHook" } },
+    components: { pathItems: { WidgetCreatedHook: { post: { operationId: "hook", summary: "hook", responses: { "200": { description: "ok" } } } } } },
+  };
+  const webhooksRefParsed = extractEndpoints(webhooksRefSpec);
+  assert(webhooksRefParsed.webhooks.length === 1 && webhooksRefParsed.webhooks[0].method === "POST", "3.1 webhooks: a $ref'd webhook PathItem resolves correctly too");
+
+  // ── validator: webhooks-only spec (valid 3.1, no `paths`) gets a specific, honest error, not a generic one ──
+  const { validateSpec } = await import("../src/validator.js");
+  const webhooksOnlySpec = { openapi: "3.1.0", info: { title: "x", version: "1.0.0" }, webhooks: webhooksSpec.webhooks };
+  const webhooksOnlyResult = validateSpec(webhooksOnlySpec);
+  assert(!webhooksOnlyResult.valid, "3.1 webhooks-only spec: still correctly reports invalid (nothing to generate)");
+  assert(webhooksOnlyResult.errors.some(e => e.includes("webhooks")), "3.1 webhooks-only spec: the error specifically explains why (webhooks present, but not callable), not a generic 'no paths' message");
+
+  // ── validator: a spec with BOTH paths and webhooks gets an informational warning, not an error ──
+  const bothResult = validateSpec(webhooksSpec);
+  assert(bothResult.valid, "3.1 spec with both paths and webhooks: still valid (paths exist)");
+  assert(bothResult.warnings.some(w => w.includes("webhook")), "3.1 spec with both paths and webhooks: gets an informational warning about the webhooks not being generated");
+}
+
 // ── Run all tests ──
 async function run() {
   console.log("ay-api-gen — End-to-End Tests\n");
@@ -773,6 +931,14 @@ async function run() {
     await testRateLimiter();
   } catch (err) {
     console.error(`\nFATAL (rate-limiter): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testOpenAPI31Support();
+  } catch (err) {
+    console.error(`\nFATAL (OpenAPI 3.1 support): ${err.message}`);
     console.error(err.stack);
     failed++;
   }

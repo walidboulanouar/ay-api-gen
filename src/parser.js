@@ -67,6 +67,37 @@ function resolveRef(ref, spec) {
 }
 
 /**
+ * Normalize an OpenAPI 3.1 / JSON Schema 2020-12 `type` onto the single-string
+ * + `nullable` boolean shape every downstream type-mapping switch (Zod
+ * codegen, form-field generation) already expects from 3.0.
+ *
+ * 3.1 dropped `nullable: true` in favor of a union `type` array, e.g.
+ * `{ "type": ["string", "null"] }` instead of 3.0's
+ * `{ "type": "string", "nullable": true }`. Code that reads `schema.type`
+ * expecting a string (every `switch (v.type)` in this codebase) silently
+ * falls through to a wrong default when handed an array — JS's `switch`
+ * doesn't throw on an unmatched value, so this was a silent mistype, not a
+ * crash. Real-world specs also mix both conventions non-conformantly even
+ * under an `"openapi": "3.1.x"` header, so both forms are normalized
+ * regardless of the declared spec version.
+ * @param {object} schema - mutated in place
+ */
+function normalizeSchemaType(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+
+  if (Array.isArray(schema.type)) {
+    const hasNull = schema.type.includes("null");
+    const primary = schema.type.find((t) => t !== "null");
+    schema.type = primary; // undefined for a pure `type: ["null"]` schema — no non-null type to map to
+    if (hasNull) schema.nullable = true;
+  }
+  // 3.0's boolean `nullable` alongside a plain string `type` needs no
+  // change — it's already in the shape downstream code expects.
+
+  return schema;
+}
+
+/**
  * Build a JSON Schema from OpenAPI parameter/schema, resolving $ref.
  */
 function buildSchema(schema, spec) {
@@ -76,20 +107,24 @@ function buildSchema(schema, spec) {
   }
   // Deep clone to avoid mutation
   const clone = JSON.parse(JSON.stringify(schema));
+  normalizeSchemaType(clone);
   // Recursively resolve $ref in properties
   if (clone.properties) {
     for (const [key, val] of Object.entries(clone.properties)) {
       if (val.$ref) {
         clone.properties[key] = resolveRef(val.$ref, spec) || val;
       }
+      normalizeSchemaType(clone.properties[key]);
       if (val.items?.$ref) {
         clone.properties[key].items = resolveRef(val.items.$ref, spec) || val.items;
       }
+      if (clone.properties[key].items) normalizeSchemaType(clone.properties[key].items);
     }
   }
   if (clone.items?.$ref) {
     clone.items = resolveRef(clone.items.$ref, spec) || clone.items;
   }
+  if (clone.items) normalizeSchemaType(clone.items);
   return clone;
 }
 
@@ -218,7 +253,16 @@ export function extractEndpoints(spec) {
   const paths = spec.paths || {};
   const usedToolNames = new Set();
 
-  for (const [path, pathItem] of Object.entries(paths)) {
+  for (const [path, rawPathItem] of Object.entries(paths)) {
+    // OpenAPI 3.1: a whole PathItem can itself be a $ref into the new
+    // components.pathItems bucket (e.g. `"/pets": { "$ref": "#/components/pathItems/PetPath" }`).
+    // resolveRef() already walks any "#/..." pointer generically, so no
+    // special-casing of "pathItems" as a bucket name is needed here — the
+    // gap was that this loop never checked for a $ref at this level at
+    // all, silently treating every method lookup below as undefined and
+    // dropping the whole path's operations with no error.
+    const pathItem = rawPathItem.$ref ? (resolveRef(rawPathItem.$ref, spec) || rawPathItem) : rawPathItem;
+
     // Shared parameters at path level
     const sharedParams = pathItem.parameters || [];
 
@@ -320,11 +364,38 @@ export function extractEndpoints(spec) {
   // Extract security schemes
   const securitySchemes = extractSecuritySchemes(spec);
 
+  // OpenAPI 3.1: `webhooks` describes requests the API sends OUTBOUND to a
+  // URL the consumer registers out-of-band — the reverse direction of
+  // everything in `paths`. Parsed structurally (same PathItem/Operation
+  // shape as `paths`, reusing the same $ref resolution) so a spec that
+  // has them doesn't silently lose data, but deliberately NOT turned into
+  // generated tools: there's no URL to call (the webhook's map key is a
+  // name, not a route), and a "call this webhook" tool would be
+  // nonsensical for a client-side codegen tool — you can't invoke an
+  // inbound handler contract from the outside. Exposed here so callers
+  // (validateSpec, doctor, generate output) can at least tell the user
+  // webhooks exist and explain why nothing was generated for them.
+  const webhooks = [];
+  for (const [name, rawWebhookItem] of Object.entries(spec.webhooks || {})) {
+    const webhookItem = rawWebhookItem.$ref ? (resolveRef(rawWebhookItem.$ref, spec) || rawWebhookItem) : rawWebhookItem;
+    for (const method of ["get", "post", "put", "patch", "delete", "head", "options"]) {
+      const operation = webhookItem[method];
+      if (!operation) continue;
+      webhooks.push({
+        name,
+        method: method.toUpperCase(),
+        summary: operation.summary || operation.description || `${method.toUpperCase()} ${name}`,
+        operationId: operation.operationId || null,
+      });
+    }
+  }
+
   return {
     baseUrl,
     info: spec.info || {},
     endpoints,
     securitySchemes,
+    webhooks,
   };
 }
 

@@ -173,6 +173,7 @@ function zodForParam(param) {
       default: schema = z.string(); break;
     }
   }
+  if (param.schema?.nullable) schema = schema.nullable();
   if (param.description) schema = schema.describe(safeDescription(param.description, "param"));
   if (!param.required) schema = schema.optional();
   return schema;
@@ -224,6 +225,7 @@ for (const ep of endpoints) {
           default: s = z.string(); break;
         }
       }
+      if (val.nullable) s = s.nullable();
       if (val.description) s = s.describe(safeDescription(val.description, "param"));
       if (!isRequired) s = s.optional();
       schemaObj[key] = s;
