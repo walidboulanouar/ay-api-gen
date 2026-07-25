@@ -20,6 +20,8 @@
 
 | 2026-07-25 | claude | post-PR#1: T-ING-3, T-API-6, T-GEN-3/T-SUP-2 audit | Re-audited full THREAT-MODEL.md against current code after PR#1 was pushed by the user (first session with push/PR authorization). Closed 2 real remaining gaps: spec size cap (T-ING-3, 25MB via statSync/streaming) applied to both `parser.js` and `discover.js`; T-API-6 rate-limit spec-lint check. Verified T-GEN-3/T-SUP-2 (dependency pinning) already correct, no fix needed. 8 new tests (`test/run.js`), 2 legitimately-changed fixture assertions (`test/integration-cli.js`, finding counts +1 on specs missing the new signal). New branch off `master`, own PR — first work done under the new per-chunk branch/PR workflow. | 5 src files, 2 test files, README.md, TASKS.md (new) | ~1h |
 
+| 2026-07-25 | claude | T-ING-4 positive audit | Ran in parallel with a browser-research subagent doing deeper competitor pricing/security-marketing research (separate topic, no file overlap). Closed the last realistic THREAT-MODEL.md gap: T-ING-4 had never actually been re-verified against the real `yaml` package adopted in S3 — the doc's own text said "needs a positive audit, not negative inference." Empirically confirmed (constructed real adversarial YAML documents, didn't just read the package docs): alias-bomb DoS guard fires on an exponential expansion chain, merge keys aren't auto-expanded (no merge-key prototype-pollution vector), literal `__proto__` keys don't touch the real prototype. Stacked as its own branch/PR on top of the still-open T-ING-3/T-API-6 PR. | 1 test file, 3 tracking docs | ~30m |
+
 ## Conventions
 
 - Append-only. Don't rewrite history rows.

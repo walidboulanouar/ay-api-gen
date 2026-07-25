@@ -4,6 +4,46 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
+
+**Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
+
+### T-ING-4 — custom YAML parser RCE/DoS risk (closed, verified not assumed)
+
+The threat model's own text on T-ING-4 says it "needs a positive audit, not negative inference" — and nobody had actually done that since S3 replaced the hand-rolled YAML parser with the real `yaml` package (ADR-013). Rather than assume a well-known package is fine, constructed real adversarial YAML and watched what actually happened:
+
+1. **Alias-bomb ("billion laughs") DoS.** Built a genuine exponential alias-expansion chain (each level references the previous level 8x, 12 levels deep) and confirmed the package's `maxAliasCount` guard actually throws — `parseYaml()`'s "never throws" contract degrades that to `null`, same as any other malformed spec.
+2. **Merge-key prototype pollution.** YAML's `<<: *anchor` merge-key syntax is NOT auto-expanded by this package's default options — `<<` comes through as a literal own key, not merged into the parent object. Confirmed by actually parsing a merge-key document and checking the child object's keys, not by reading about the feature.
+3. **`__proto__` key pollution.** A spec with a literal `__proto__: {polluted: true}` map key round-trips as ordinary JSON-visible data and does not touch the real, global `Object.prototype` — confirmed by checking `({}).polluted` after parsing, the actual security invariant that matters (not just "did it look right when printed").
+
+6 new regression tests in `test/run.js` lock all three in permanently. No code fix was needed — this is a real, verified reassurance, not a rubber stamp.
+
+### Competitor research (browser-equipped subagent)
+
+Prior research (see the gap-analysis session below) hit two "not found" walls doing text-only fetches: Speakeasy/Gram's current self-serve pricing and FastMCP Cloud's tier limits. A subagent with live browser access (chrome-devtools/claude-in-chrome tools) re-checked both:
+
+- **Speakeasy/Gram**: confirmed, not just suspected — `speakeasy.com/pricing` is now a single "Enterprise / Tailored" tier, every CTA is "LET'S CHAT," genuinely zero self-serve pricing or free tier left. `app.getgram.ai/pricing` redirects to Speakeasy's own login — Gram has been fully absorbed into Speakeasy's "AI control plane" product, not a separate listing anymore. Worth updating future competitor lists to treat them as one entry, not two.
+- **FastMCP Cloud / Prefect Horizon**: a genuinely new finding, not just a confirmation. The exact URL `fastmcp.cloud/pricing` is still gated (redirects to an auth wall), which is why text-only research reported "not found" — but the real public pricing page is `prefect.io/pricing?product=horizon`, fully readable with no login: a **Personal/Free** tier (1 developer, 200 servers, Claude/Cursor integration), a **Developer** tier ($35/developer/mo + usage, unlimited servers, bring-your-own-auth), and an **Enterprise** tier (RBAC, SSO/SCIM). This is a materially different picture than "pricing not publicly visible" — FastMCP/Horizon does have a real, generous free self-serve tier, just not at the URL the prior pass tried.
+- **Security marketing framing** (a new angle, not in the original gap analysis): Speakeasy now leads its entire homepage identity with security/control-plane messaging, has a public `/security` page (SOC 2 II, ISO 27001) and a named vulnerability-disclosure contact (`bugs@speakeasy.com`) with CVSS-based bounty rewards. FastMCP's own docs site doesn't lead with security at all (framed as "the fast, Pythonic way to build MCP servers"); security/governance is pushed onto the paid Horizon tier. Parent company Prefect has a solid `/security` page but no public vulnerability-disclosure contact was found on it, unlike Speakeasy's explicit one.
+
+Not yet folded into `GAP-ANALYSIS.md` — that requires deciding how to phrase the Personal/Free-tier finding (it's a real gap-analysis update: FastMCP/Horizon has cheaper, more generous self-serve pricing than assumed) and re-verifying the exact numbers hold up before committing them to a document that makes citable claims. Flagging as the natural next small chunk rather than rushing an edit into this session.
+
+### Verification
+
+```bash
+node test/run.js              # 166/166 (160 + 6 new: T-ING-4)
+node test/integration-cli.js  # 120/120 (unaffected — no runtime code touched, test-only + docs change)
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean — same two pre-existing findings
+```
+
+No leaked processes (`ps aux` checked).
+
+### What's left
+
+`GAP-ANALYSIS.md` needs a small, careful update reflecting the FastMCP/Horizon free-tier finding above — next chunk. Otherwise unchanged: S1-08 (Luisa's sign-off), Task 17 (npm publish), C-01..C-07 all still genuinely blocked on human decisions or live infra (see `SHOWCASE.html`'s provisioning checklist).
+
+---
+
 ## 2026-07-25 — Session: post-PR#1 threat-model re-audit — T-ING-3, T-API-6
 
 **Status: complete.** First session under new standing rules: the user pushed the prior work and opened PR #1 (`ay-framework` → `master`), and authorized pushing/opening PRs directly going forward, one new branch per meaningful chunk, no direct commits to `master`/`ay-framework`. Also authorized using the Agent tool for parallelizable work and a lightweight `TASKS.md` board to survive `/compact`.

@@ -618,6 +618,58 @@ paths:
     blockScalarResult?.summary === "This folds into one line.\n",
     "YAML corpus: folded block scalar (>) folds line breaks into spaces"
   );
+
+  // ── T-ING-4 positive audit ──
+  // THREAT-MODEL.md flagged "custom YAML parsers have historically had
+  // RCE/DoS issues (tag handlers, anchor/alias bombs)... needs a positive
+  // audit, not negative inference." That was written against the OLD
+  // hand-rolled parser; nobody had actually re-verified it against the
+  // real `yaml` package this project switched to in S3 (ADR-013). Verified
+  // empirically here, not assumed from the package's reputation:
+
+  // (a) Billion-laughs / alias-bomb resource-exhaustion protection. The
+  // `yaml` package enforces a default maxAliasCount cap and throws once an
+  // alias chain's expansion exceeds it — confirmed by actually constructing
+  // an exponential alias-expansion chain (each level references the
+  // previous level 8x) rather than trusting the package's own docs. The
+  // parseYaml() wrapper's "never throws" contract degrades this to `null`,
+  // same as any other malformed input — a spec that trips this is rejected
+  // outright, not silently truncated or partially expanded.
+  let aliasBomb = 'a: &a0 ["x","x","x","x","x","x","x","x"]\n';
+  for (let i = 1; i <= 12; i++) {
+    aliasBomb += `a${i}: &a${i} [*a${i - 1}, *a${i - 1}, *a${i - 1}, *a${i - 1}, *a${i - 1}, *a${i - 1}, *a${i - 1}, *a${i - 1}]\n`;
+  }
+  const aliasBombResult = parseYaml(aliasBomb);
+  assert(aliasBombResult === null, "T-ING-4: an exponential alias-expansion (\"billion laughs\") chain is rejected (degrades to null), not expanded into a resource-exhausting object");
+
+  // A single, ordinary, non-exponential anchor/alias (already proven above
+  // to resolve correctly) must NOT be caught by the same guard — the DoS
+  // protection has to have a real, usable threshold, not fire on any use
+  // of `&`/`*` at all.
+  assert(anchorResult !== null, "T-ING-4: the alias-bomb guard does not false-positive on an ordinary single anchor/alias pair (already asserted above, restated here as the explicit contrast case)");
+
+  // (b) Merge keys (`<<: *anchor`) are NOT auto-expanded into the parent
+  // object by this package's default options — `<<` comes through as a
+  // literal own key whose value is the referenced object, not merged in.
+  // This matters because OpenAPI itself has no notion of YAML merge keys,
+  // so there's no legitimate spec content this could silently corrupt, and
+  // it forecloses a merge-key-based prototype-pollution vector some YAML
+  // implementations have historically had (a malicious `<<: *proto` merging
+  // attacker-controlled keys onto a shared object).
+  const mergeKeyYaml = "base: &base\n  role: user\nchild:\n  <<: *base\n  name: bob\n";
+  const mergeKeyResult = parseYaml(mergeKeyYaml);
+  assert(mergeKeyResult?.child?.name === "bob", "T-ING-4: a document using merge-key syntax still parses (does not throw)");
+  assert(mergeKeyResult?.child?.role === undefined, "T-ING-4: merge keys (<<: *anchor) are NOT auto-merged into the parent object by default — '<<' stays a literal key, not expanded (forecloses a merge-key prototype-pollution vector)");
+
+  // (c) A literal `__proto__` map key does not pollute Object.prototype.
+  // Checked via JSON.stringify (which only serializes real own-enumerable
+  // properties, never the actual prototype chain) to confirm the key
+  // round-tripped as ordinary data, plus a direct check that the global
+  // Object.prototype was never touched — the actual security invariant.
+  const protoYaml = "__proto__:\n  polluted: true\n";
+  const protoResult = parseYaml(protoYaml);
+  assert(JSON.stringify(protoResult).includes('"polluted":true'), "T-ING-4: a literal '__proto__' YAML key round-trips as ordinary data (visible via JSON.stringify)");
+  assert(({}).polluted === undefined, "T-ING-4: parsing a spec with a literal '__proto__' key does NOT pollute the global Object.prototype");
 }
 
 /**
