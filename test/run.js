@@ -8,7 +8,7 @@
 import { loadSpec, extractEndpoints, deriveToolName, readCapped, MAX_SPEC_BYTES } from "../src/parser.js";
 import { generateMCPServer } from "../src/mcp-generator.js";
 import { generateCLI } from "../src/cli-generator.js";
-import { generateOpenAPIFromTools } from "../src/reverse.js";
+import { generateOpenAPIFromTools, readMCPTools } from "../src/reverse.js";
 import { truncateResponse, asMcpContent } from "../src/truncate.js";
 import { safeDescription } from "../src/desc-sanitize.js";
 import { resolveBaseUrl, assertHostAllowed } from "../src/url-guard.js";
@@ -151,6 +151,71 @@ async function testReverse() {
 
   const createOp = spec.paths["/users"].post;
   assert(createOp.requestBody, "create_user has request body");
+}
+
+/**
+ * Regression: readMCPTools()'s server.tool() regex only ever matched a
+ * plain quoted string as the second argument (the tool description). The
+ * T-RUN-3 security fix (S1) wrapped every generated description in
+ * `safeDescription(<raw>, "tool") || "<fallback>"` for prompt-injection
+ * sanitization — an expression, not a string literal — so the second
+ * argument in every server.tool() call this project's OWN generator emits
+ * no longer starts with a quote character at all. Confirmed via a direct
+ * repro: readMCPTools() against a real generateMCPServer() output returned
+ * an empty tools array, silently. The whole reverse-generation feature
+ * (`--from-mcp <generated-server-file>`, documented as a top-level feature
+ * in README.md) was broken against this project's own real output, and
+ * nothing caught it because readMCPTools() had zero test coverage against
+ * actual generated code — testReverse() above only exercises
+ * generateOpenAPIFromTools() with hand-built tool objects, never the
+ * source-parsing path.
+ */
+async function testReverseExtractionFromGeneratedServer() {
+  console.log("\n--- Regression: readMCPTools() against a real generated server ---");
+
+  const parsed = {
+    baseUrl: "https://api.example.com",
+    info: { title: "Widgets API", version: "1.0.0" },
+    endpoints: [
+      {
+        toolName: "list_widgets", method: "GET", path: "/widgets", summary: "List widgets",
+        parameters: [], security: [], cliCommand: { resource: "widgets", action: "list" },
+      },
+      {
+        toolName: "create_widget", method: "POST", path: "/widgets", summary: "Create a widget",
+        parameters: [], security: [], cliCommand: { resource: "widgets", action: "create" },
+      },
+    ],
+    securitySchemes: {},
+  };
+
+  const generatedSrc = generateMCPServer(parsed, { name: "widgets" });
+  const tmpDir = mkdtempSync(resolvePath(tmpdir(), "ay-reverse-extract-test-"));
+  const serverPath = resolvePath(tmpDir, "mcp-server.js");
+  fsWriteFileSync(serverPath, generatedSrc, "utf-8");
+
+  const result = readMCPTools(serverPath);
+  assert(result.type === "tools", "readMCPTools: a generated server file is recognized as a 'tools' source, not misparsed as settings.json");
+  assert(result.tools.length === 2, `readMCPTools: extracts BOTH tools from a real generated server (got ${result.tools.length}) — the old plain-quoted-string-only regex extracted 0`);
+  assert(result.tools.some(t => t.name === "list_widgets" && t.description === "List widgets"), "readMCPTools: correctly extracts the tool name and the RAW (pre-sanitization) description from inside safeDescription(...), not the wrapper expression itself");
+  assert(result.tools.some(t => t.name === "create_widget" && t.description === "Create a widget"), "readMCPTools: extracts every tool in the file, not just the first");
+
+  // Backward-compat: a plain quoted-string second argument (a hand-written
+  // or third-party MCP server, not one this tool generated) must still work.
+  const handWrittenSrc = [
+    'server.tool(',
+    '  "get_status",',
+    '  "Get service status",',
+    '  {',
+    '    verbose: z.boolean().optional(),',
+    '  },',
+    '  async (params) => {}',
+    ');',
+  ].join("\n");
+  const handWrittenPath = resolvePath(tmpDir, "hand-written-server.js");
+  fsWriteFileSync(handWrittenPath, handWrittenSrc, "utf-8");
+  const handWrittenResult = readMCPTools(handWrittenPath);
+  assert(handWrittenResult.tools.length === 1 && handWrittenResult.tools[0].name === "get_status" && handWrittenResult.tools[0].description === "Get service status", "readMCPTools: still correctly extracts a plain-quoted-string description (backward compat with non-generated MCP server files)");
 }
 
 /**
@@ -1125,6 +1190,14 @@ async function run() {
     await testSpecSizeCap();
   } catch (err) {
     console.error(`\nFATAL (T-ING-3 spec size cap): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testReverseExtractionFromGeneratedServer();
+  } catch (err) {
+    console.error(`\nFATAL (reverse-extraction regression): ${err.message}`);
     console.error(err.stack);
     failed++;
   }
