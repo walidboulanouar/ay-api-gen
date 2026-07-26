@@ -4,6 +4,20 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: add SECURITY.md
+
+**Status: complete.** After a clean sweep for the LEARN-002 timing-race class and adding the missing LICENSE/CHANGELOG, checked for the rest of the standard GitHub repo-hygiene files: no `SECURITY.md`, no `CONTRIBUTING.md`, no `CODE_OF_CONDUCT.md`, no `.github/ISSUE_TEMPLATE`/`PULL_REQUEST_TEMPLATE.md`.
+
+Deliberately picked only `SECURITY.md` from that list, not all of them reflexively. `CONTRIBUTING.md`/`CODE_OF_CONDUCT.md`/issue-PR templates are standard for a project actively soliciting outside contributors — this is a single-maintainer repo, not yet even published to npm, so those would be premature ceremony. `SECURITY.md` is different: it's directly on-brand given `GAP-ANALYSIS.md`'s strongest evidence-backed claim (a track record of hardening against SSRF/injection-class bugs *before* shipping, in classes where FastMCP and `openapi-mcp-generator` shipped real, later-disclosed CVEs), and the same research explicitly noted Speakeasy has a public vulnerability-disclosure contact while this project didn't. Closing a specific, previously-flagged gap, not inventing scope.
+
+Points reporters at GitHub's private vulnerability reporting as the preferred channel (no personal email needed anywhere), with a plain public-issue fallback. Defines real in-scope/out-of-scope boundaries matching this project's actual documented threat model, not a generic template. Logged the one-time "enable private vulnerability reporting" repo-settings toggle in `HUMAN-SETUP-NEEDED.md` — a Settings change only a repo admin can make, not something this session should do itself, and explicitly non-blocking since the fallback works without it.
+
+### What's left
+
+Same as ever. PRs #7 through #13 are all open, unmerged, awaiting Walid's review.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
