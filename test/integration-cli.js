@@ -763,10 +763,58 @@ async function testHttpTransport() {
   assert(warnOutput.includes("WARNING") && warnOutput.includes("0.0.0.0"), "http transport: binding beyond 127.0.0.1 (e.g. 0.0.0.0) prints a loud, specific warning");
 }
 
+/**
+ * T-GEN-5: `serve` and `run` used to re-exec their runtime scripts via
+ * `execSync(\`node ${...args.map(a => JSON.stringify(a)).join(" ")}\`, ...)`
+ * — a shell command STRING built from user-supplied arguments, quoted with
+ * JSON.stringify() on the (wrong) theory that JSON-quoting is shell-safe.
+ * It isn't: POSIX shell double-quotes still allow `$(...)` command
+ * substitution and `$VAR` expansion, and JSON.stringify() only escapes `"`
+ * and `\`, neither of which stops that. Confirmed with a real repro before
+ * fixing (see PROGRESS-LOG.md): `ay-api-gen run <spec> '$(touch /tmp/x)'`
+ * actually created /tmp/x via the shell. Since `run`'s <resource>/<action>
+ * and `serve`'s <spec> are arbitrary, free-form, user-typed strings by
+ * design, this was directly exploitable by any caller — not a contrived
+ * edge case. Fixed by switching to execFileSync with an argv array, which
+ * never goes through a shell at all.
+ */
+async function testCommandInjectionFixed() {
+  console.log("\n--- Regression: command injection via run/serve shell-string building (T-GEN-5) ---");
+
+  const tmp = mkTmpProject();
+  const runMarker = resolve(tmp, "cmd-injection-run-marker");
+  const serveMarker = resolve(tmp, "cmd-injection-serve-marker");
+
+  // `run`: a $(...) payload in the <resource>/<action> position. NOTE: no
+  // JSON.stringify() around the marker path here — nesting another layer
+  // of quoting inside the payload changes what actually reaches the
+  // shell and can mask the bug. This mirrors the exact payload shape
+  // used to manually confirm the vulnerability (see PROGRESS-LOG.md).
+  await runCLI(
+    ["run", "https://example.invalid/openapi.json", `$(touch ${runMarker})`, "list"],
+    { cwd: tmp, timeout: 10000 }
+  );
+  assert(!existsSync(runMarker), "command injection (run): a $(...) payload in a resource/action argument does NOT execute a shell command");
+
+  // `serve`: a $(...) payload in the <spec-url-or-file> position. The
+  // bogus spec source fails to load quickly (ENOENT / invalid URL), same
+  // as observed in the manual repro — no need to kill the process.
+  await runCLI(
+    ["serve", `$(touch ${serveMarker})`],
+    { cwd: tmp, timeout: 5000 }
+  );
+  assert(!existsSync(serveMarker), "command injection (serve): a $(...) payload in the spec-source argument does NOT execute a shell command");
+
+  // Positive control: ordinary, legitimate arguments still work through
+  // the same code path — the fix isn't just rejecting everything.
+  const { stdout: serveHelp, code: serveHelpCode } = await runCLI(["serve"], { cwd: tmp, timeout: 5000 });
+  assert(serveHelpCode === 1 && serveHelp.includes("Usage: ay-api-gen serve"), "command injection fix: `serve` with no spec still gives the normal usage error, not a broken re-exec");
+}
+
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport, testCommandInjectionFixed];
   for (const t of tests) {
     try {
       await t();

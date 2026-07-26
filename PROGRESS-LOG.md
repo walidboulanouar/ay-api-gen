@@ -4,6 +4,50 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-26 — Session: T-GEN-5, a real command injection in `run`/`serve`
+
+**Status: complete.** Same deep-read-under-examined-files strategy that found real bugs in `diff.js`/`reverse.js`/`doctor.js` the last three rounds — this time targeted at `bin/ay-api-gen.js` (the CLI entry point) and `src/init-wizard.js`. This is the most severe finding of the whole session.
+
+### The bug
+
+`ay-api-gen serve <spec>` and `ay-api-gen run <spec> <resource> <action>` re-exec their runtime scripts via `execSync(\`node ${...args.map(a => JSON.stringify(a)).join(" ")}\`, { stdio: "inherit" })` — building a **shell command string** from user-supplied arguments, "quoted" with `JSON.stringify()` on the assumption that JSON-quoting is shell-safe. It isn't: POSIX shell double-quotes still allow `$(...)` command substitution and `$VAR` expansion, and `JSON.stringify()` only escapes `"` and `\`, neither of which stops that.
+
+Confirmed with a real repro before touching any code:
+
+```bash
+node bin/ay-api-gen.js run 'https://example.com/openapi.json' '$(touch /tmp/ay_cmd_injection_run_marker)' list
+# /tmp/ay_cmd_injection_run_marker gets created — genuine, immediate command execution
+```
+
+Same for `serve`'s spec-source argument. This is not a contrived edge case: `run`'s `<resource>`/`<action>` and `serve`'s `<spec>` are arbitrary, free-form, user-typed strings by design — the entire point of those commands — and `run`'s args are literally everything after `run` on the command line, completely unfiltered. Any caller (a human typo, a wrapper script, a CI job templating in a value) passing a crafted string gets arbitrary shell command execution, no spec-parsing or network round-trip required first.
+
+### The fix
+
+Switched both call sites from `execSync(shellString)` to `execFileSync(process.execPath, argvArray)`. `execFileSync` with an argv array never invokes a shell at all — there's no metacharacter-interpretation surface left to escape, not just a better-escaped one.
+
+### Proof
+
+Revert-confirm-restore, and it took a second pass to do properly: the first regression-test draft wrapped the marker path in an extra `JSON.stringify()` inside the injection payload, which nested nother layer of escaped quotes and — subtly — masked the bug on revert (the vulnerable code still "passed" the test, a false negative). Caught this by actually checking *which* test failed after reverting, not just the pass/fail count, and simplified the payload to match the manual repro exactly (no nested quoting). With that fixed: reverting the code fix produces exactly 2 failures (the two injection assertions, not the positive control); restoring gives 123/123 clean. Worth remembering — a revert-confirm test is only as trustworthy as its own payload construction.
+
+### Other files checked this round
+
+`src/init-wizard.js` — clean. The wizard's own `loadSpec(source)` call (previewing the spec before generation) has no `assertHostAllowed()` guard, but `source` is a URL the user just typed into an interactive prompt themselves — the same lower-priority T-ING-5 posture already assessed and accepted elsewhere in this project's history, not a new gap. The actual generation path (`cmdGenerate`, called after the wizard returns) already re-loads the spec and correctly calls `assertHostAllowed()`. One trivial, non-functional finding: `generateEnvExample` is imported but never used in the file — dead code, not fixed (not worth its own PR).
+
+### Verification
+
+```bash
+node test/run.js              # 166/166 (unaffected)
+node test/integration-cli.js  # 123/123 (120 + 3 new), ran 3x clean
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same 2 pre-existing findings
+ps aux | grep -i "mcp-server.js\|ay-api-gen"           # no leaked processes
+```
+
+### What's left
+
+Same as ever. PRs #7 through #18 are all open, unmerged, awaiting Walid's review.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
