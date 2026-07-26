@@ -4,6 +4,36 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: harden init-wizard stdin-timing (LEARN-002)
+
+**Status: complete.** Direct follow-up to the previous round's flagged-but-deferred finding: `test/integration-cli.js`'s `init`-wizard tests flaked once under load, traced to a real race in `runCLI()`'s scripted-stdin-answer delivery — a fixed 200ms delay between writes regardless of whether the child process had actually reached its next `rl.question()` prompt. This became a genuine CI-reliability risk once PRs #7/#8 wired this suite into the CI/release gates, so it was worth fixing properly rather than just bumping the delay.
+
+### The fix
+
+Replaced the fixed delay with event-driven synchronization. `runCLI()`'s `inputLines` entries can now be `{ waitFor: "<prompt substring>", send: "<answer>", maxWaitMs?: number }` instead of a bare string — a new `waitForOutput()` polls the child's accumulated stdout every 20ms until the real prompt text appears (default cap 4000ms, overridable per entry), then sends. If the pattern never appears, it resolves anyway once the cap elapses rather than hanging — the per-call `opts.timeout` is still the real backstop. Updated both existing `testInit()` scenarios to synchronize on `src/init-wizard.js`'s actual prompt strings instead of guessing a delay. Also added `opts.binPath` to `runCLI()` so a fixture script other than the real CLI binary can be driven through the exact same mechanism — needed for the regression test below.
+
+### Proving it has teeth (revert-confirm-restore, adapted)
+
+Tried the project's usual wall-clock stress-test approach first — 8 concurrent CPU-spinning background processes, 3 runs — and it didn't reproduce the original flake. Same experience this project had with B-09's file-lock race (documented in `test/run.js`): the timing window is real but too narrow to reliably collide via ad-hoc contention. Fell back to the same fix that worked there — a **deterministic** reproduction instead of a probabilistic one. New `testInitWizardStdinTimingHardening()`: a purpose-built fixture script (`delayed-prompt.js`) whose `rl.question()` prompt is deliberately delayed 600ms past spawn (3x the old hardcoded delay). This directly (a) reproduces the OLD bug's exact failure mode — a raw probe timed at the old 200ms delay genuinely finds no prompt text yet, proving the race was real, not hypothetical — and (b) proves the NEW `waitFor`-based mechanism delivers the answer correctly regardless of the delay, driven through the real `runCLI()` helper via the new `binPath` override, not a parallel reimplementation.
+
+An adversarial-fork review (before opening the PR) came back clean but flagged one real gap: the `maxWaitMs` timeout-fallback branch (pattern never appears) wasn't exercised by any test. Closed that too — a second fixture script with a differently-worded prompt, `waitFor` set to a pattern that can never match, and a short 300ms `maxWaitMs` proves the fallback actually sends (doesn't hang) and the child still receives it correctly.
+
+### Verification
+
+```bash
+node test/run.js              # 166/166 (unaffected — no src/ code touched)
+node test/integration-cli.js  # 125/125 (120 existing + 5 new: 3 for the core fix, 2 for the fallback path)
+# ran the integration suite 5x+ across the session for flakiness — clean every time
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same 2 pre-existing findings
+ps aux | grep -i "delayed-prompt\|other-prompt"        # no leaked processes after any run
+```
+
+### What's left
+
+Same as ever: S1-08, Task 17 (npm publish), C-01..C-07 all blocked on human decisions or live infra. PRs #7, #8, #9, and this round's timing-fix PR are all open, unmerged, awaiting Walid's review — per the standing correction earlier this session, merging is never mine to do.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).

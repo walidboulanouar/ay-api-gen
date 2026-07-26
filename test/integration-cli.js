@@ -51,7 +51,7 @@ function assert(condition, msg) {
  */
 function runCLI(args, opts = {}) {
   return new Promise((resolvePromise) => {
-    const child = spawn("node", [BIN_PATH, ...args], {
+    const child = spawn("node", [opts.binPath || BIN_PATH, ...args], {
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env },
     });
@@ -70,17 +70,49 @@ function runCLI(args, opts = {}) {
       resolvePromise({ stdout: stdout + stderr, code: code ?? 1 });
     });
 
+    /**
+     * Wait until `pattern` has appeared in the child's accumulated stdout
+     * (polling every 20ms), up to `maxWaitMs`. Resolves as soon as the
+     * pattern shows up rather than waiting out the full budget. If
+     * maxWaitMs elapses first, resolves anyway (never rejects) so a
+     * mistyped/stale pattern degrades to "send after a wait" instead of
+     * hanging the whole suite — the per-call `opts.timeout` above is the
+     * real backstop against that.
+     */
+    function waitForOutput(pattern, maxWaitMs = 4000) {
+      return new Promise((res) => {
+        const start = Date.now();
+        const check = () => {
+          if (stdout.includes(pattern)) { res(true); return; }
+          if (Date.now() - start >= maxWaitMs) { res(false); return; }
+          setTimeout(check, 20);
+        };
+        check();
+      });
+    }
+
     if (opts.inputLines) {
-      // Interactive readline wizards (init) need answers delivered as
-      // separate, delayed writes — writing the whole scripted transcript in
-      // one shot and immediately end()-ing stdin unreliably drops buffered
-      // lines that arrive after the process's first `rl.question()` read.
+      // Interactive readline wizards (init) need each answer sent only
+      // once the child has actually printed its NEXT rl.question() prompt
+      // (readline writes the prompt to stdout before blocking on a read) —
+      // a fixed delay between writes is a race under CPU contention: if the
+      // child hasn't reached the next prompt yet when the timer fires, the
+      // write lands too early and readline can drop or misread it (this
+      // caused a real, if rare, CI-relevant flake — see PROGRESS-LOG.md).
+      // Each entry is either a plain string (sent immediately, kept for
+      // backward compatibility) or `{ waitFor, send }`, synchronizing on
+      // the actual prompt text instead of guessing a delay.
       let i = 0;
-      const sendNext = () => {
+      const sendNext = async () => {
         if (i >= opts.inputLines.length) { child.stdin.end(); return; }
-        child.stdin.write(opts.inputLines[i] + "\n");
+        const entry = opts.inputLines[i];
         i++;
-        setTimeout(sendNext, 200);
+        const isTimed = entry !== null && typeof entry === "object";
+        if (isTimed && entry.waitFor) {
+          await waitForOutput(entry.waitFor, entry.maxWaitMs);
+        }
+        child.stdin.write((isTimed ? entry.send : entry) + "\n");
+        sendNext();
       };
       sendNext();
     } else {
@@ -288,10 +320,19 @@ async function testInit() {
   const expectedName = "diff-fixture"; // derived from info.title "Diff Fixture"
   preventAutoInstall(resolve(tmp, `.ay/apis/${expectedName}`));
 
-  // Scripted answers: (1) source type "2" = local file, (2) file path,
-  // (3) accept default API name, (4) no auth detected -> skip API key prompt.
+  // Scripted answers, each synchronized on the real prompt it answers
+  // (see runCLI's waitFor handling): (1) source type "2" = local file,
+  // (2) file path, (3) accept default API name, (4) no auth detected ->
+  // skip API key prompt.
   const { stdout, code } = await runCLI(["init", "--no-settings"], {
-    cwd: tmp, inputLines: ["2", specPath, "", ""], timeout: 20000,
+    cwd: tmp,
+    inputLines: [
+      { waitFor: "Choice [1]:", send: "2" },
+      { waitFor: "File path:", send: specPath },
+      { waitFor: "API name [", send: "" },
+      { waitFor: "API key (if needed", send: "" },
+    ],
+    timeout: 20000,
   });
   assert(code === 0, "init: exits 0 after a full scripted run");
   assert(stdout.includes("Diff Fixture"), "init: echoes the loaded spec's title back to the user");
@@ -303,8 +344,95 @@ async function testInit() {
   assert(existsSync(resolve(tmp, ".ay/apis/registry.json")), "init: registers the generated API in the registry");
 
   // A blank domain on the auto-discover path should bail out cleanly, not hang or crash.
-  const { code: bailCode } = await runCLI(["init"], { cwd: mkTmpProject(), inputLines: ["3", ""], timeout: 10000 });
+  const { code: bailCode } = await runCLI(["init"], {
+    cwd: mkTmpProject(),
+    inputLines: [
+      { waitFor: "Choice [1]:", send: "3" },
+      { waitFor: "Domain (e.g., petstore.swagger.io):", send: "" },
+    ],
+    timeout: 10000,
+  });
   assert(bailCode === 0, "init: exits 0 when the user aborts mid-wizard (empty domain on auto-discover)");
+}
+
+/**
+ * LEARN-002 regression: runCLI()'s inputLines mechanism used to send each
+ * scripted answer after a fixed 200ms delay, regardless of whether the
+ * child had actually reached its next `rl.question()` prompt yet. That's a
+ * real race, not a hypothetical one — a wall-clock stress test (many
+ * concurrent CPU-bound processes) didn't reliably reproduce it in this
+ * sandbox (same experience this project had proving B-09's file-lock race
+ * — see test/run.js's testFileLock() comments), so this proves it
+ * deterministically instead: a purpose-built fixture process whose prompt
+ * is artificially delayed past the old fixed delay.
+ */
+async function testInitWizardStdinTimingHardening() {
+  console.log("\n--- Regression: init-wizard stdin timing hardening (LEARN-002) ---");
+
+  const tmp = mkTmpProject();
+  const scriptPath = resolve(tmp, "delayed-prompt.js");
+  writeFileSync(scriptPath, [
+    'import { createInterface } from "node:readline";',
+    "setTimeout(() => {",
+    '  const rl = createInterface({ input: process.stdin, output: process.stdout });',
+    '  rl.question("Choice [1]: ", (answer) => {',
+    '    console.log("GOT:" + answer);',
+    "    rl.close();",
+    "    process.exit(0);",
+    "  });",
+    "}, 600);", // deliberately well past the old hardcoded 200ms delay
+  ].join("\n"));
+
+  // (a) Reproduce the OLD bug's exact mechanism directly: a send timed off
+  // a fixed short delay lands before this deliberately-slow prompt has even
+  // printed. This is the concrete failure mode the fix addresses — proof
+  // the race was real, not just a theoretical concern.
+  const probe = spawn("node", [scriptPath]);
+  let probeOut = "";
+  probe.stdout.on("data", d => { probeOut += d; });
+  await new Promise((r) => setTimeout(r, 200));
+  const promptAlreadyPrinted = probeOut.includes("Choice [1]:");
+  probe.kill("SIGKILL");
+  assert(!promptAlreadyPrinted, "init-wizard stdin timing: reproduces the OLD bug's failure mode — a fixed 200ms delay is not always enough for a real prompt to appear (this fixture's prompt takes 600ms), so a fixed-delay send is a genuine race");
+
+  // (b) The NEW waitFor-based mechanism, exercised through the real
+  // runCLI() helper (opts.binPath overrides the target script), correctly
+  // waits for the actual prompt regardless of the delay and delivers the
+  // answer to it — proving the fix, not just the old bug's absence.
+  const { stdout, code } = await runCLI([], {
+    binPath: scriptPath,
+    cwd: tmp,
+    inputLines: [{ waitFor: "Choice [1]:", send: "hello-world" }],
+    timeout: 5000,
+  });
+  assert(code === 0, "init-wizard stdin timing: the delayed-prompt fixture exits cleanly when answered correctly");
+  assert(stdout.includes("GOT:hello-world"), "init-wizard stdin timing: waitFor-based send correctly delivers input to a prompt that only appears 600ms after spawn — 3x the old fixed delay");
+
+  // (c) Fallback safety: if `waitFor`'s pattern never appears at all (a
+  // stale/mistyped pattern, or a prompt that legitimately never prints),
+  // waitForOutput() must still resolve once maxWaitMs elapses and the
+  // write must still go out — degrading to "send anyway" rather than
+  // hanging sendNext()/the whole call forever. A short per-entry
+  // maxWaitMs keeps this fast instead of eating the 4s default.
+  const otherPromptScriptPath = resolve(tmp, "other-prompt.js");
+  writeFileSync(otherPromptScriptPath, [
+    'import { createInterface } from "node:readline";',
+    'const rl = createInterface({ input: process.stdin, output: process.stdout });',
+    'rl.question("Something else entirely: ", (answer) => {',
+    '  console.log("GOT2:" + answer);',
+    "  rl.close();",
+    "  process.exit(0);",
+    "});",
+  ].join("\n"));
+
+  const { stdout: fallbackStdout, code: fallbackCode } = await runCLI([], {
+    binPath: otherPromptScriptPath,
+    cwd: tmp,
+    inputLines: [{ waitFor: "This exact pattern will never appear", maxWaitMs: 300, send: "fallback-answer" }],
+    timeout: 5000,
+  });
+  assert(fallbackCode === 0, "init-wizard stdin timing: when waitFor's pattern never appears, the fallback still sends after maxWaitMs elapses instead of hanging forever");
+  assert(fallbackStdout.includes("GOT2:fallback-answer"), "init-wizard stdin timing: the fallback-delivered answer is still received correctly by the child once sent");
 }
 
 // ── audit --baseline (free T0 static lint, ADR-010) ──
@@ -766,7 +894,7 @@ async function testHttpTransport() {
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testInitWizardStdinTimingHardening, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport];
   for (const t of tests) {
     try {
       await t();
