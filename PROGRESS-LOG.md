@@ -4,6 +4,20 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: sync README with real CLI --help
+
+**Status: complete.** Ran an honest final-survey fork before this round, explicitly instructed not to manufacture busywork and to report genuinely nothing found if that was the truth (the standing instruction this whole session has been "if you genuinely run out of infra-free work, write a wrap-up and stand by rather than manufacturing busywork"). It came back with one real, concrete, demonstrable finding rather than padding a report.
+
+`README.md`'s "All commands" and "Options" sections had drifted badly out of sync with `bin/ay-api-gen.js`'s actual `printHelp()` output: documented only 7 of 12 real commands (missing `init`, `discover`, `doctor`, `audit --baseline`, `diff`) and 6 of roughly 19 real flags (missing `--only`, `--exclude`, `--slim`, `--token-budget`, `--max-tools`, `--verbose`, `--force`, `--allow-host-override`, `--accept-risks`, `--mode`, `--transport`, `--port`, `--host`). Notably ironic: `--mode`, `--accept-risks`, and `audit --baseline` are exactly the security-linting flags `GAP-ANALYSIS.md` leans on as evidence for this project's differentiator, and they were completely undocumented in the README a new user actually reads first.
+
+Fixed by verifying line-by-line against `node bin/ay-api-gen.js --help`'s real output, not by guessing — every command and flag now matches exactly.
+
+### What's left
+
+Same as ever. PRs #7 through #14 are all open, unmerged, awaiting Walid's review. Worth continuing the "honest survey, report nothing if there's nothing" pattern for future rounds rather than assuming there's always one more small thing to find.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
