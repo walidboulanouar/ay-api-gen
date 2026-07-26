@@ -4,6 +4,30 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: harden http-transport warning wait (same race class as LEARN-002)
+
+**Status: complete.** Immediate follow-up to fixing LEARN-002 (init-wizard stdin timing): swept the rest of `test/integration-cli.js` for the same pattern class — a fixed `setTimeout` delay standing in for "wait until the child process has actually done X" — and found one more real instance.
+
+`testHttpTransport()`'s "binding beyond 127.0.0.1 prints a loud warning" check waited a blind fixed 800ms after spawning the server, then asserted the WARNING text was present in accumulated stderr. Identical failure mode to the init-wizard bug: a fixed delay assumes the child has finished starting and printed by then, which isn't guaranteed under CPU contention — a slow start on a loaded CI runner would produce a false "no warning" failure against a perfectly correct build.
+
+Fixed by reusing the identical poll-until-ready pattern already used a few lines above in the same function for the "listening on" check — not new mechanism, an already-proven idiom from the same file. Poll for the actual WARNING text, capped at 5s, instead of guessing a delay. Skipped building a full deterministic fixture-based proof (like LEARN-002's) for this one — the bar for extra proof is lower when reusing an already-verified pattern rather than introducing new synchronization logic.
+
+Unplanned bonus: `test/integration-cli.js`'s total runtime dropped from ~12-14s to ~7-9s, since the suite no longer blindly waits the full 800ms when the warning appears almost immediately.
+
+### Verification
+
+```bash
+node test/run.js              # 166/166 (unaffected)
+node test/integration-cli.js  # 121/121 (120 + 1 new assertion), ran 5x clean
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same 2 pre-existing findings
+```
+
+### What's left
+
+Same as ever. PRs #7 through #11 are all open, unmerged, awaiting Walid's review. Worth periodically re-checking future test additions for this same fixed-delay pattern class rather than treating it as fully closed after two fixes.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
