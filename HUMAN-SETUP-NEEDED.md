@@ -32,6 +32,12 @@ Credentials / decisions a human must provide. Deduplicated; append here as new o
 - **Why it wasn't built tonight:** this isn't a code gap so much as an infrastructure/business decision — it needs a real deployment target (a server, container platform, or serverless host), DNS, TLS, and an uptime/ops story, none of which can be stood up or meaningfully verified in a sandbox session with no live infra. It's also a much bigger scope than "add a feature" — it's closer to standing up a new product surface.
 - **What's needed to build this properly:** a decision on hosting model (self-managed VPS/container platform vs. a serverless platform vs. partnering with an existing MCP-hosting provider), plus real infrastructure credentials once that decision is made. Flagging for awareness — not recommending any specific path, since that's a product/business call, not an engineering one.
 
+## Enable GitHub's private vulnerability reporting (recommended, not blocking)
+
+- **What it's for:** `SECURITY.md` (new, 2026-07-25) points reporters at GitHub's private vulnerability reporting flow as the preferred way to disclose a security issue — no personal email needed anywhere, private draft advisory until resolved.
+- **Where to get it:** repo Settings → Security → "Private vulnerability reporting" → Enable. A one-time toggle only a repo admin can flip; not something this session can do via the CLI (it's a settings change, not a code change).
+- **Status:** `SECURITY.md`'s fallback (open a regular issue asking for a private channel) works fine without this, so it's a nice-to-have, not a blocker on anything.
+
 ---
 
 ## Not needed for the S1/S2/S3 sessions' work
