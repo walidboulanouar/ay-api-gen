@@ -220,7 +220,12 @@ async function testDoctor() {
       authTypes: ["none"],
     }, tmp);
 
-    const { stdout, code } = await runCLI(["doctor"], { cwd: tmp });
+    // AY_ALLOW_PRIVATE_HOSTS: the fixture server is 127.0.0.1 by construction
+    // (this test), which the T-ING-2 private-IP guard doctor.js now enforces
+    // (see the dedicated SSRF-guard regression test below) would otherwise
+    // correctly refuse — same pattern used by the other tests exercising a
+    // real ephemeral local fixture server.
+    const { stdout, code } = await runCLI(["doctor"], { cwd: tmp, env: { AY_ALLOW_PRIVATE_HOSTS: "1" } });
     assert(code === 0, "doctor: exits 0 when every check passes");
     assert(stdout.includes("doctor-fixture"), "doctor: reports on the registered API by name");
     assert(/spec reachable/.test(stdout), "doctor: runs the 'spec reachable' check");
@@ -244,6 +249,95 @@ async function testDoctor() {
   const { stdout: failStdout, code: failCode } = await runCLI(["doctor"], { cwd: tmp2 });
   assert(failCode === 1, "doctor: exits 1 when a registered API's spec is unreachable");
   assert(/spec reachable/.test(failStdout), "doctor: still reports the 'spec reachable' check on failure (does not crash)");
+}
+
+/**
+ * Regression: `doctor`'s "base URL reachable" / "API responds" checks used
+ * to fetch `process.env.API_BASE_URL || parsed.baseUrl` directly — no
+ * T-RUN-1 same-host-override enforcement, no T-ING-2 private-IP/metadata
+ * deny-list, unlike every other outbound-request path in this project
+ * (runtime/mcp-server.js, runtime/cli.js, the generated CLI). `doctor` is
+ * documented as a read-only health check but still attaches real auth
+ * headers to its request (buildAuthHeaders()) — an attacker who can write
+ * settings.json's API_BASE_URL could point a "safe" health check at an
+ * internal host or 169.254.169.254 and have it fetched WITH credentials.
+ * Both guards now proven with a real network-level assertion, not just a
+ * status-string check.
+ */
+async function testDoctorSsrfGuard() {
+  console.log("\n--- Regression: doctor SSRF/host guards (T-RUN-1, T-ING-2) ---");
+
+  // (a) T-ING-2: a registered API whose baseUrl is a real, live private-IP
+  // server. Without AY_ALLOW_PRIVATE_HOSTS=1, doctor must refuse to dial it
+  // — proven not just by a failing check string, but by a real hit-counter
+  // on the canary server staying at 0. If the guard were bypassed, this
+  // canary WOULD receive the HEAD (and possibly the GET) request.
+  let canaryHits = 0;
+  const canary = createServer((req, res) => { canaryHits++; res.writeHead(200); res.end(); });
+  await new Promise(r => canary.listen(0, "127.0.0.1", r));
+  const canaryPort = canary.address().port;
+  const canaryOrigin = `http://127.0.0.1:${canaryPort}`;
+
+  const tmp = mkTmpProject();
+  try {
+    await registerAPI("doctor-ssrf-fixture", {
+      source: `${canaryOrigin}/openapi.json`, // unreachable path is fine — spec-reachable failing first is a separate, already-covered case; here we register the config directly and skip straight to a doctor run against a pre-built fixture instead of relying on spec fetch succeeding
+      baseUrl: canaryOrigin,
+      outputDir: resolve(tmp, "out"),
+      endpointCount: 0,
+      authTypes: ["none"],
+    }, tmp);
+
+    // The spec itself must actually be reachable for the run to get past
+    // check 1/2 and reach the host-guard logic — point `source` at a real
+    // minimal spec served by the SAME canary server (still 127.0.0.1, so
+    // the "spec reachable" fetch also needs AY_ALLOW_PRIVATE_HOSTS... except
+    // spec-fetching (parser.js's loadSpec) was never host-guarded in the
+    // first place (T-ING-5, a separate, lower-priority, already-assessed
+    // item — the spec URL is one the user/registry already trusted enough
+    // to register). Only the base-URL/API-request path is under test here.
+    const miniSpec = {
+      openapi: "3.0.3",
+      info: { title: "SSRF Guard Fixture", version: "1.0.0" },
+      servers: [{ url: canaryOrigin }],
+      paths: { "/ping": { get: { operationId: "ping", summary: "Ping", responses: { 200: { description: "ok" } } } } },
+    };
+    canary.removeAllListeners("request");
+    canary.on("request", (req, res) => {
+      canaryHits++;
+      if (req.url === "/openapi.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(miniSpec)); return; }
+      res.writeHead(200); res.end(); // any other path (HEAD /, GET /ping) — would only be hit if the guard failed
+    });
+
+    const { stdout, code } = await runCLI(["doctor"], { cwd: tmp }); // deliberately NOT setting AY_ALLOW_PRIVATE_HOSTS
+    assert(code === 1, "doctor SSRF guard: exits 1 — the base-URL host check genuinely fails the run, not just warns");
+    assert(/base URL reachable.*Refusing connect to private/.test(stdout), "doctor SSRF guard: 'base URL reachable' fails with the actual private-IP refusal message, not a generic network error");
+    assert(/API responds/.test(stdout) && /skip|API responds.*skip/i.test(stdout), "doctor SSRF guard: 'API responds' is skipped rather than attempted once the base URL fails the host check");
+    // Exactly 1 hit expected: the spec-fetch itself (/openapi.json, T-ING-5
+    // is out of scope here) — zero hits to "/" (HEAD) or "/ping" (GET),
+    // which is what the OLD unguarded code would have produced.
+    assert(canaryHits === 1, `doctor SSRF guard: the private-IP canary server received exactly 1 request (the spec fetch) — got ${canaryHits}; any additional hit would mean the base-URL/API-response guard was bypassed`);
+  } finally {
+    await new Promise(r => canary.close(r));
+  }
+
+  // (b) T-RUN-1: API_BASE_URL overriding to a DIFFERENT host than the spec
+  // declared must be rejected by default (no live server needed — resolveBaseUrl
+  // rejects on host mismatch before any network call is attempted).
+  const tmp2 = mkTmpProject();
+  await registerAPI("doctor-hostmismatch-fixture", {
+    source: resolve(FIXTURES, "diff-a.json"), // a local file spec — no network needed to reach checks 1/2
+    baseUrl: "https://real-api.example.com",
+    outputDir: resolve(tmp2, "out"),
+    endpointCount: 0,
+    authTypes: ["none"],
+  }, tmp2);
+  const { stdout: mismatchStdout, code: mismatchCode } = await runCLI(["doctor"], {
+    cwd: tmp2,
+    env: { API_BASE_URL: "https://attacker.example.com" },
+  });
+  assert(mismatchCode === 1, "doctor SSRF guard: a cross-host API_BASE_URL override is rejected by default (T-RUN-1), failing the run");
+  assert(/rejected/.test(mismatchStdout) || /host\/scheme differs/.test(mismatchStdout), "doctor SSRF guard: the failure message explains it's a host/scheme mismatch, not a generic network error");
 }
 
 // ── discover (ephemeral local server) ──
@@ -766,7 +860,7 @@ async function testHttpTransport() {
 async function run() {
   console.log("ay-api-gen — CLI Integration Tests (S2-01)\n");
 
-  const tests = [testDiff, testFilter, testSlim, testDoctor, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport];
+  const tests = [testDiff, testFilter, testSlim, testDoctor, testDoctorSsrfGuard, testDiscover, testInit, testAuditBaseline, testConcurrentWriteLocking, testGen2PackageJsonSafety, testGen4OutputPathSafety, testResponseCaching, testRateLimiting, testOpenAPI31RuntimeNullable, testHttpTransport];
   for (const t of tests) {
     try {
       await t();

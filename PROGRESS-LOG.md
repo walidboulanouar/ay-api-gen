@@ -4,6 +4,44 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: fix a real SSRF bug in doctor.js
+
+**Status: complete.** Same deep-read pass that found the `reverse.js` bug (PR #16): `src/reverse.js`, `src/registry.js`, `src/doctor.js`, `src/env-generator.js`, all cold-read, none assumed clean from their filenames. `doctor.js` had a real, more significant bug than `reverse.js`'s — a genuine, exploitable SSRF gap. `registry.js` and `env-generator.js` came back clean on the same genuine read (no fixes needed, not silently skipped).
+
+### The bug
+
+`checkAPI()`'s "base URL reachable" and "API responds" health checks fetched `process.env.API_BASE_URL || parsed.baseUrl` directly, with zero use of `url-guard.js` — neither the T-RUN-1 same-host-override constraint (any `API_BASE_URL` value was accepted, not just a same-host one) nor the T-ING-2 private-IP/cloud-metadata deny-list (no `assertHostAllowed()` call at all) that every OTHER outbound-request path in this project enforces (`runtime/mcp-server.js`, `runtime/cli.js`, the generated standalone CLI, all hardened in S1). `doctor` is documented as a read-only health check, but it still attaches real auth headers to its request via `buildAuthHeaders()` — an attacker who can write `settings.json`'s `API_BASE_URL` (the exact T-SET-* threat class this project's own settings-namespacing already defends against elsewhere) could point a "safe" health check at an internal host or `169.254.169.254` and have it fetched WITH the API's real credentials attached.
+
+### Proof the bug was real, before fixing anything
+
+Followed the same discipline as `diff.js`/`reverse.js`: proved this with a real network-level assertion, not a code-reading opinion. Wrote the fix and its test first, then temporarily reverted just the fix (revert-confirm-restore) — with the OLD code, a real canary HTTP server listening on a private IP (`127.0.0.1`) received **3 requests** (the spec fetch, plus the unguarded HEAD "base URL reachable" check, plus the unguarded GET "API responds" check) when `doctor` was run without `AY_ALLOW_PRIVATE_HOSTS=1`. That's not a hypothetical — it's the exact SSRF the guard exists to prevent, actually firing against a real listener.
+
+### The fix
+
+Routed `baseUrl` resolution through `resolveBaseUrl(parsed.baseUrl, process.env.API_BASE_URL)` (T-RUN-1) and added `assertHostAllowed()` both once up front and again immediately before the actual endpoint-response fetch (T-ING-2, protects against DNS rebinding between the two checks — same double-check pattern already used in `runtime/mcp-server.js`). On a guard failure, "base URL reachable" is reported as a hard FAIL with the guard's real error message, and "API responds" is skipped rather than attempted — no fallback path that still dials out.
+
+### Fixing the existing test's own collateral breakage
+
+The pre-existing `testDoctor()` test's own fixture server is `127.0.0.1` by construction (an ephemeral local HTTP server, the established pattern for these integration tests) — which the new guard now correctly refuses by default. Added `AY_ALLOW_PRIVATE_HOSTS: "1"` to that test's `runCLI()` call, the same opt-out pattern already used by three other tests in this file that exercise real local fixture servers.
+
+### Verification
+
+```bash
+node test/run.js              # 166/166 (unaffected by this PR — no unit-test-covered code touched)
+node test/integration-cli.js  # 126/126 (120 + 6 new), including a real hit-counter assertion on
+                               # a canary server, not just a status-string check. One transient
+                               # flake this round (1 failure), confirmed unrelated via 3 clean reruns.
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same 2 pre-existing findings
+```
+
+No leaked processes.
+
+### What's left
+
+Same as ever. PRs #7 through #17 are all open, unmerged, awaiting Walid's review. `registry.js` and `env-generator.js` are the only files checked this deep-read pass that came back genuinely clean. Three consecutive rounds (#15, #16, #17) finding real bugs — one of them a genuine SSRF — via targeted deep-reads of under-examined files, all in code paths with weak or zero real test coverage. Worth continuing this search pattern.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
