@@ -21,10 +21,13 @@ import { isCacheable, cacheKey, getCached, setCached, clearCache, cacheSize } fr
 import { throttle, rpsToMinIntervalMs, resetRateLimiter } from "../src/rate-limiter.js";
 import {
   mkdtempSync, mkdirSync, writeFileSync as fsWriteFileSync, readFileSync as fsReadFileSync,
-  closeSync, openSync, utimesSync,
+  closeSync, openSync, utimesSync, readdirSync, statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, dirname, join as joinPath } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let passed = 0;
 let failed = 0;
@@ -1061,6 +1064,87 @@ async function testSpecSizeCap() {
   assert(streamRejected, "T-ING-3: readCapped() aborts mid-stream once more than maxBytes have arrived, even with no/lying Content-Length");
 }
 
+/**
+ * T-GEN-5 regression guard: bin/ay-api-gen.js's `run`/`serve` commands used
+ * to re-exec their runtime scripts via `execSync(shellString)`, with args
+ * "quoted" only by `JSON.stringify()` — which does not stop `$(...)`
+ * command substitution inside POSIX double quotes. Confirmed a real,
+ * directly-exploitable command injection this way (`run <spec>
+ * '$(touch /tmp/x)'` actually ran the shell command), since `<resource>`/
+ * `<action>` are arbitrary user-typed strings by design. Fixed by switching
+ * to `execFileSync(bin, argvArray)`, which never invokes a shell at all.
+ *
+ * This is a static, permanent guard against the SAME BUG CLASS reappearing
+ * anywhere in src/ or bin/ in a future change — not a re-test of the one
+ * fixed call site. Scans every .js file under src/ and bin/ for an
+ * `execSync(` call whose command is built from a template literal
+ * containing `${...}` interpolation (the exact shape of the original bug);
+ * a bare string literal (no interpolation at all, e.g. the legitimate
+ * `execSync("npm install --production --silent", ...)` for `npm install`)
+ * is safe and does not trigger this check. Any future `execSync` call that
+ * interpolates dynamic content into a shell command string should use
+ * `execFileSync` with an argv array instead — this test exists so that
+ * mistake gets caught by CI, not found by hand again.
+ */
+function listJsFilesRecursive(dir) {
+  let out = [];
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry.startsWith(".")) continue;
+    const full = joinPath(dir, entry);
+    if (statSync(full).isDirectory()) {
+      out = out.concat(listJsFilesRecursive(full));
+    } else if (entry.endsWith(".js")) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+async function testNoShellInterpolatedExecSync() {
+  console.log("\n--- T-GEN-5 regression guard: no shell-interpolated execSync() in src/ or bin/ ---");
+
+  const projectRoot = resolvePath(__dirname, "..");
+  const targets = [
+    ...listJsFilesRecursive(resolvePath(projectRoot, "src")),
+    ...listJsFilesRecursive(resolvePath(projectRoot, "bin")),
+  ];
+  assert(targets.length > 5, `T-GEN-5 guard: sanity-checked the file walk itself found a real set of files (${targets.length} .js files under src/ + bin/), not an empty/broken glob`);
+
+  const interpolatedExecSyncRe = /execSync\(\s*`[^`]*\$\{/;
+  // Strip whole-line `//` comments before scanning. Without this, a doc
+  // comment that quotes the OLD vulnerable code as historical context
+  // (exactly what bin/ay-api-gen.js's fix comment does, on purpose, to
+  // explain what was wrong) trips the same regex as real code — a real
+  // false positive hit while writing this guard, not a hypothetical one.
+  // Naive on purpose (this scans our own trusted source, not adversarial
+  // input): only drops lines that are ENTIRELY a `//` comment once
+  // trimmed, which is exactly the shape of the multi-line doc comment that
+  // caused the false positive; it does not attempt to strip trailing
+  // same-line comments, which isn't the failure mode seen here.
+  const stripWholeLineComments = (src) => src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  const offenders = targets.filter((file) => interpolatedExecSyncRe.test(stripWholeLineComments(fsReadFileSync(file, "utf-8"))));
+  assert(offenders.length === 0, `T-GEN-5 guard: no execSync() call in src/ or bin/ builds its command from a template-literal with \${...} interpolation${offenders.length ? " (found in: " + offenders.map((f) => f.replace(projectRoot + "/", "")).join(", ") + ")" : ""}`);
+
+  // Positive control: the guard's own regex must actually be capable of
+  // catching the exact shape of the real, fixed bug — proves this isn't a
+  // vacuously-passing check.
+  const bugShapeSample = 'execSync(`node ${runtimeArgs.map(a => JSON.stringify(a)).join(" ")}`, { stdio: "inherit" });';
+  assert(interpolatedExecSyncRe.test(bugShapeSample), "T-GEN-5 guard: the detection regex correctly flags the exact shape of the original vulnerable code (positive control — proves the guard isn't vacuous)");
+
+  // Negative control: a plain string-literal execSync (no interpolation at
+  // all, e.g. the legitimate npm-install call) must NOT be flagged.
+  const safeShapeSample = 'execSync("npm install --production --silent", { cwd: outputDir, stdio: "pipe" });';
+  assert(!interpolatedExecSyncRe.test(safeShapeSample), "T-GEN-5 guard: a plain string-literal execSync() with no interpolation is correctly NOT flagged (negative control)");
+
+  // Comment control: a `//`-prefixed doc comment quoting the bug's shape as
+  // historical explanation must NOT be flagged after stripping — this is
+  // the exact false positive hit while building this guard (bin/ay-api-gen.js's
+  // own fix comment quotes the old vulnerable line to explain what changed).
+  const commentedBugShapeSample = `  // T-GEN-5: this used to be —\n  //   ${bugShapeSample}\n  // — fixed below.`;
+  assert(interpolatedExecSyncRe.test(commentedBugShapeSample), "T-GEN-5 guard: sanity check — the raw regex (pre-strip) DOES match a comment quoting the bug, proving the strip step is load-bearing, not redundant");
+  assert(!interpolatedExecSyncRe.test(stripWholeLineComments(commentedBugShapeSample)), "T-GEN-5 guard: after stripping whole-line comments, a doc comment quoting the old vulnerable shape for explanation is correctly NOT flagged (comment control — the real false positive this guard hit while being built)");
+}
+
 // ── Run all tests ──
 async function run() {
   console.log("ay-api-gen — End-to-End Tests\n");
@@ -1125,6 +1209,14 @@ async function run() {
     await testSpecSizeCap();
   } catch (err) {
     console.error(`\nFATAL (T-ING-3 spec size cap): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testNoShellInterpolatedExecSync();
+  } catch (err) {
+    console.error(`\nFATAL (T-GEN-5 execSync guard): ${err.message}`);
     console.error(err.stack);
     failed++;
   }
