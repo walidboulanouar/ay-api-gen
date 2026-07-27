@@ -9,7 +9,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-05-10T17:42:45.469Z"
+      "generatedAt": "2026-07-27T09:20:05.147Z"
     },
     "petstore-test": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -20,7 +20,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-05-10T20:47:12.126Z"
+      "generatedAt": "2026-07-27T09:20:10.463Z"
     },
     "petstore-e2e": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -31,7 +31,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-05-10T22:03:39.570Z"
+      "generatedAt": "2026-07-27T09:20:12.988Z"
     },
     "httpbin": {
       "source": "https://httpbin.org/spec.json",
