@@ -9,7 +9,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-07-27T09:20:05.147Z"
+      "generatedAt": "2026-08-03T08:54:14.774Z"
     },
     "petstore-test": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -20,7 +20,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-07-27T09:20:10.463Z"
+      "generatedAt": "2026-08-03T08:54:18.702Z"
     },
     "petstore-e2e": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -31,7 +31,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-07-27T09:20:12.988Z"
+      "generatedAt": "2026-08-03T08:54:20.448Z"
     },
     "httpbin": {
       "source": "https://httpbin.org/spec.json",
@@ -41,7 +41,7 @@
       "authTypes": [
         "none"
       ],
-      "generatedAt": "2026-05-10T22:05:07.155Z"
+      "generatedAt": "2026-08-03T08:55:13.578Z"
     },
     "petstore3": {
       "source": "https://petstore3.swagger.io/api/v3/openapi.json",
@@ -52,39 +52,39 @@
         "OAuth2 (implicit)",
         "API Key in header: api_key"
       ],
-      "generatedAt": "2026-05-10T22:05:38.935Z"
+      "generatedAt": "2026-08-03T08:55:15.739Z"
     },
     "filter-test": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
       "baseUrl": "https://petstore.swagger.io/v2",
       "outputDir": "/tmp/filter-test",
-      "endpointCount": 8,
+      "endpointCount": 20,
       "authTypes": [
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-05-11T13:10:19.337Z"
+      "generatedAt": "2026-08-03T08:55:17.777Z"
     },
     "filter-test2": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
       "baseUrl": "https://petstore.swagger.io/v2",
       "outputDir": "/tmp/filter-test2",
-      "endpointCount": 8,
+      "endpointCount": 20,
       "authTypes": [
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-05-11T13:10:22.541Z"
+      "generatedAt": "2026-08-03T08:55:19.601Z"
     },
     "slim-test": {
       "source": "https://httpbin.org/spec.json",
       "baseUrl": "https://httpbin.org/",
       "outputDir": "/tmp/slim-test",
-      "endpointCount": 10,
+      "endpointCount": 73,
       "authTypes": [
         "none"
       ],
-      "generatedAt": "2026-05-11T13:10:24.571Z"
+      "generatedAt": "2026-08-03T08:55:21.928Z"
     },
     "yaml-test": {
       "source": "/tmp/test-spec.yaml",
