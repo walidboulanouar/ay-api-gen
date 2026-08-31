@@ -9,7 +9,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-08-24T06:30:16.677Z"
+      "generatedAt": "2026-08-31T11:56:02.054Z"
     },
     "petstore-test": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -20,7 +20,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-08-24T06:30:21.705Z"
+      "generatedAt": "2026-08-31T11:56:06.960Z"
     },
     "petstore-e2e": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -31,7 +31,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-08-24T06:30:24.302Z"
+      "generatedAt": "2026-08-31T11:56:09.444Z"
     },
     "httpbin": {
       "source": "https://httpbin.org/spec.json",
@@ -41,7 +41,7 @@
       "authTypes": [
         "none"
       ],
-      "generatedAt": "2026-08-24T06:30:27.326Z"
+      "generatedAt": "2026-08-31T11:56:12.157Z"
     },
     "petstore3": {
       "source": "https://petstore3.swagger.io/api/v3/openapi.json",
@@ -52,7 +52,7 @@
         "OAuth2 (implicit)",
         "API Key in header: api_key"
       ],
-      "generatedAt": "2026-08-24T06:30:29.920Z"
+      "generatedAt": "2026-08-31T11:56:14.767Z"
     },
     "filter-test": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -63,7 +63,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-08-24T06:30:32.372Z"
+      "generatedAt": "2026-08-31T11:56:17.314Z"
     },
     "filter-test2": {
       "source": "https://petstore.swagger.io/v2/swagger.json",
@@ -74,7 +74,7 @@
         "API Key in header: api_key",
         "OAuth2 (implicit)"
       ],
-      "generatedAt": "2026-08-24T06:30:34.786Z"
+      "generatedAt": "2026-08-31T11:56:19.764Z"
     },
     "slim-test": {
       "source": "https://httpbin.org/spec.json",
@@ -84,7 +84,7 @@
       "authTypes": [
         "none"
       ],
-      "generatedAt": "2026-08-24T06:30:37.404Z"
+      "generatedAt": "2026-08-31T11:56:22.519Z"
     },
     "yaml-test": {
       "source": "/tmp/test-spec.yaml",
