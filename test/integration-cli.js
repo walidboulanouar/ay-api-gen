@@ -756,10 +756,19 @@ async function testHttpTransport() {
     "--transport", "http", "--port", String(mcpPort2), "--host", "0.0.0.0",
   ]);
   let warnOutput = "";
-  child2.stderr.on("data", (d) => { warnOutput += d; });
-  await new Promise((r) => setTimeout(r, 800));
+  let warnSeen = false;
+  child2.stderr.on("data", (d) => { warnOutput += d; if (d.toString().includes("WARNING")) warnSeen = true; });
+  // Poll for the actual warning text instead of blindly waiting a fixed
+  // 800ms — the same class of race as LEARN-002 (a fixed delay assumes the
+  // child has finished starting up and printed by then, which isn't
+  // guaranteed under CPU contention; a slow start would silently produce a
+  // false "no warning" failure on a correct build). Same poll-until-ready
+  // pattern already used above for the "listening on" line.
+  const warnStart = Date.now();
+  while (!warnSeen && Date.now() - warnStart < 5000) await new Promise((r) => setTimeout(r, 50));
   child2.kill("SIGKILL");
   await new Promise((r) => child2.on("close", r));
+  assert(warnSeen, "http transport: the non-loopback warning is actually printed (not just eventually, within a bounded poll)");
   assert(warnOutput.includes("WARNING") && warnOutput.includes("0.0.0.0"), "http transport: binding beyond 127.0.0.1 (e.g. 0.0.0.0) prints a loud, specific warning");
 }
 
