@@ -121,11 +121,18 @@ OAUTH_ACCESS_TOKEN=your-access-token-here
 ```bash
 # Generate
 ay-api-gen <spec-url-or-file> [options]     # OpenAPI → MCP + CLI
+ay-api-gen init                             # Interactive setup wizard
 ay-api-gen --from-mcp <file> [options]      # Reverse: MCP → OpenAPI
 
 # Runtime (no codegen)
-ay-api-gen serve <spec>                     # Start MCP server directly
+ay-api-gen serve <spec> [--transport http]  # Start MCP server directly
 ay-api-gen run <spec> <resource> <action>   # Call API directly
+
+# Discover & inspect
+ay-api-gen discover <domain>                # Auto-find an OpenAPI spec on a domain
+ay-api-gen doctor                           # Health check all registered APIs
+ay-api-gen audit --baseline <spec>          # Free T0 static security lint (no license needed)
+ay-api-gen diff <old-spec> <new-spec>       # Compare two spec versions
 
 # Manage
 ay-api-gen list                             # List all generated APIs
@@ -136,12 +143,27 @@ ay-api-gen regen [name|--all]               # Regenerate from saved config
 ### Options
 
 ```
---output, -o <dir>   Output directory (default: .ay/apis/<name>/)
---name, -n <name>    API name override
---no-settings        Skip auto-registering in Claude Code settings.json
---from-mcp <file>    Read MCP tools from settings.json or server file
---all                Regenerate all APIs (with regen)
---help, -h           Show help
+--output, -o <dir>     Output directory (default: .ay/apis/<name>/)
+--name, -n <name>      API name override
+--no-settings          Skip auto-registering in Claude Code settings.json
+--from-mcp <file>      Read MCP tools from settings.json or server file
+--all                  Regenerate all APIs (with regen)
+--only <patterns>      Only include matching endpoints (comma-separated)
+--exclude <patterns>   Exclude matching endpoints (comma-separated)
+--slim                 Smart pruning: keep only essential tools within a token budget
+--token-budget <n>     Token budget for --slim (default: 8000)
+--max-tools <n>        Max tools for --slim (default: 50)
+--verbose, -v          Verbose output
+--force                Overwrite colliding settings.json entries (see Security)
+--allow-host-override  Allow API_BASE_URL to rebind to a different host
+--accept-risks <ids>   Comma-separated spec-linter findings to downgrade (mode b),
+                        e.g. T-API-1:POST_charge
+--mode <a|b>           Spec-lint mode: a=warn-only (default), b=block on HIGH/CRITICAL
+--transport <t>        serve: "stdio" (default) or "http" (StreamableHTTP)
+--port <n>             serve --transport http: port to listen on (default 3000)
+--host <addr>          serve --transport http: bind address (default 127.0.0.1 —
+                        binding beyond localhost has no built-in auth, logs a loud warning)
+--help, -h             Show help
 ```
 
 ## Security
