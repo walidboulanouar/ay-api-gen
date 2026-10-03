@@ -13,6 +13,7 @@ import { truncateResponse, asMcpContent } from "../src/truncate.js";
 import { safeDescription } from "../src/desc-sanitize.js";
 import { resolveBaseUrl, assertHostAllowed } from "../src/url-guard.js";
 import { lintSpec, parseAcceptRisks } from "../src/spec-linter.js";
+import { diffEndpoints } from "../src/diff.js";
 import { injectSettings } from "../src/settings-injector.js";
 import { parseYaml } from "../src/yaml-parser.js";
 import { withFileLock } from "../src/file-lock.js";
@@ -1061,6 +1062,78 @@ async function testSpecSizeCap() {
   assert(streamRejected, "T-ING-3: readCapped() aborts mid-stream once more than maxBytes have arrived, even with no/lying Content-Length");
 }
 
+/**
+ * diff.js: diffEndpoints() used to match old/new endpoints by `toolName`,
+ * which can carry an order-dependent "_2"/"_3" dedup suffix (see parser.js's
+ * extractEndpoints() -> `usedToolNames`) assigned during iteration over the
+ * spec's `paths` object. Two specs describing the EXACT same endpoints,
+ * just with their paths declared in a different key order, could get that
+ * suffix attached to different (but equally-colliding) physical endpoints
+ * between the old and new spec — producing false "changed" (path/summary
+ * "changed") diff entries for an API that hadn't actually changed at all.
+ * Fixed by matching on the stable (method, path) identity instead. Found
+ * and confirmed via a real, triggerable repro during a source-code survey,
+ * not a hypothetical — this test locks that repro in permanently.
+ */
+async function testDiffOrderIndependentMatching() {
+  console.log("\n--- diff.js: order-independent endpoint matching ---");
+
+  // Two colliding endpoints (same derived base tool name "list_users" via
+  // the trailing-slash duplicate — a real thing that happens with legacy
+  // routing), declared in opposite order between the "old" and "new" spec.
+  // Nothing about either endpoint actually changed.
+  const mkSpec = (order) => {
+    const a = { get: { summary: "List users", responses: { "200": { description: "ok" } } } };
+    const b = { get: { summary: "List users trailing slash", responses: { "200": { description: "ok" } } } };
+    return {
+      openapi: "3.0.0",
+      info: { title: "Dup Order Test", version: "1.0" },
+      servers: [{ url: "https://8.8.8.8" }],
+      paths: order === 1 ? { "/users": a, "/users/": b } : { "/users/": b, "/users": a },
+    };
+  };
+
+  const oldParsed = extractEndpoints(mkSpec(1));
+  const newParsed = extractEndpoints(mkSpec(2));
+  // Sanity: confirm the reorder actually does flip which physical endpoint
+  // gets the "_2" suffix — otherwise this test wouldn't be exercising the
+  // bug at all.
+  const oldSlash = oldParsed.endpoints.find(e => e.path === "/users/");
+  const newSlash = newParsed.endpoints.find(e => e.path === "/users/");
+  assert(oldSlash.toolName !== newSlash.toolName, "diff.js test setup: the declaration-order flip actually does swap which endpoint gets the dedup suffix (confirms this exercises the real bug, not a no-op)");
+
+  const result = diffEndpoints(oldParsed.endpoints, newParsed.endpoints);
+  assert(result.added.length === 0, "diff order-independence: no false 'added' entries for an unchanged API, just because paths were declared in a different order");
+  assert(result.removed.length === 0, "diff order-independence: no false 'removed' entries either");
+  assert(!result.changed.some(c => c.changes.some(ch => ch.startsWith("path:"))), "diff order-independence: no endpoint is falsely reported as having a changed path — neither endpoint's path actually changed");
+  assert(!result.changed.some(c => c.changes.includes("summary changed")), "diff order-independence: no endpoint is falsely reported as having a changed summary — neither endpoint's summary actually changed");
+
+  // The one legitimate, accurate side-effect: since the two endpoints
+  // genuinely collide on their base derived name, the LITERAL generated
+  // tool name for a given URL really does swap between the two orderings
+  // (regenerating from either spec produces different function names) —
+  // that's real, user-relevant information, not noise, and should still
+  // be reported as a "tool name" change.
+  assert(result.changed.length === 2 && result.changed.every(c => c.changes.length === 1 && c.changes[0].startsWith("tool name:")), "diff order-independence: the only real change reported is the tool-name swap itself, which is accurate (a real consequence of the naming collision), not a false positive");
+
+  // Positive control: a genuine path rename (not just a reorder) must
+  // still be detected as a real change — the fix must not overcorrect
+  // into silence.
+  const renamedSpec = {
+    openapi: "3.0.0",
+    info: { title: "Dup Order Test", version: "1.0" },
+    servers: [{ url: "https://8.8.8.8" }],
+    paths: {
+      "/users": { get: { summary: "List users", responses: { "200": { description: "ok" } } } },
+      "/accounts": { get: { summary: "List users trailing slash", responses: { "200": { description: "ok" } } } },
+    },
+  };
+  const renamedParsed = extractEndpoints(renamedSpec);
+  const renameResult = diffEndpoints(oldParsed.endpoints, renamedParsed.endpoints);
+  assert(renameResult.added.some(e => e.path === "/accounts"), "diff order-independence: a genuinely renamed path is still correctly detected as added...");
+  assert(renameResult.removed.some(e => e.path === "/users/"), "diff order-independence: ...and the old path is still correctly detected as removed (the fix doesn't mask real changes)");
+}
+
 // ── Run all tests ──
 async function run() {
   console.log("ay-api-gen — End-to-End Tests\n");
@@ -1125,6 +1198,14 @@ async function run() {
     await testSpecSizeCap();
   } catch (err) {
     console.error(`\nFATAL (T-ING-3 spec size cap): ${err.message}`);
+    console.error(err.stack);
+    failed++;
+  }
+
+  try {
+    await testDiffOrderIndependentMatching();
+  } catch (err) {
+    console.error(`\nFATAL (diff.js order-independent matching): ${err.message}`);
     console.error(err.stack);
     failed++;
   }

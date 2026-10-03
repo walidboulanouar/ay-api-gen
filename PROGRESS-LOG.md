@@ -4,6 +4,40 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: fix a real bug in diff.js (order-dependent endpoint matching)
+
+**Status: complete.** Ran a targeted survey fork with a specific directive: actually deep-read `src/validator.js`, `src/filter.js`, `src/slim.js`, `src/diff.js` cold — a prior, broader survey had only skimmed these in favor of the README/--help finding (PR #14). This time it found something materially more significant than the run of hygiene fixes before it.
+
+### The bug
+
+`diffEndpoints()` in `src/diff.js` matched old/new endpoints by `toolName` — but `toolName` can carry an order-dependent `_2`/`_3` dedup suffix, assigned in `parser.js`'s `extractEndpoints()` while iterating over the spec's `paths` object in declaration order (`usedToolNames`). Two specs describing the *exact same* endpoints, just with their paths declared in a different key order — a real, common occurrence, not contrived (many spec tools reformat or reorder paths with zero semantic change) — could get that suffix attached to *different physical endpoints* between the old and new spec.
+
+Reproduced concretely before touching any code: two specs with identical `/users` and `/users/` endpoints (a realistic trailing-slash duplicate), reordered between them. `ay-api-gen diff` reported *both* endpoints as "changed" — path changed, summary changed — even though nothing about either endpoint actually differed. A pure false positive from the naming collision's order-dependent suffix, defeating the entire purpose of a "did the API actually change" tool.
+
+### The fix
+
+Match on the stable `(method, path)` identity instead of the derived `toolName`. Kept the one genuinely useful signal the old code implicitly carried: a real "tool name changed" report still fires when the literal generated function name for the same URL would differ (e.g. an `operationId` was added or changed) — that's true, user-relevant information (regenerating really would produce a different function name), not noise. A positive-control test confirms a genuine path rename is still correctly detected as added+removed — the fix doesn't overcorrect into silence.
+
+### Proof
+
+Same revert-confirm-restore discipline as everywhere else in this project's history: temporarily reverted just the matching key back to `toolName`, confirmed the new tests fail exactly as predicted (2 of 8 new assertions — the false "summary changed" and "only a tool-name change" claims), restored the fix, confirmed all 8 pass again.
+
+### Verification
+
+```bash
+node test/run.js              # 174/174 (166 + 8 new)
+node test/integration-cli.js  # 120/120 (unaffected), ran 3x clean (one earlier run flaked — same
+                               # pre-existing transient-load pattern seen twice before this session,
+                               # confirmed unrelated by immediate clean reruns)
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same 2 pre-existing findings
+```
+
+### What's left
+
+Same as ever. PRs #7 through #15 are all open, unmerged, awaiting Walid's review. The deep-read backlog (`validator.js`, `filter.js`, `slim.js`) from the prior survey is closed out — those three came back clean, only `diff.js` had a real issue. Worth noting for future rounds: a targeted, deep, cold read of specific under-examined files found a materially more significant bug than the broader hygiene sweeps before it — a higher-yield search strategy once the obvious gaps (LICENSE, CHANGELOG, SECURITY.md, README drift) are closed.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).

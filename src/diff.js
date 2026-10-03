@@ -11,25 +11,40 @@ import { loadSpec, extractEndpoints } from "./parser.js";
  * @param {Array} newEndpoints
  * @returns {{ added, removed, changed }}
  */
-function diffEndpoints(oldEndpoints, newEndpoints) {
-  const oldMap = new Map(oldEndpoints.map(e => [e.toolName, e]));
-  const newMap = new Map(newEndpoints.map(e => [e.toolName, e]));
+export function diffEndpoints(oldEndpoints, newEndpoints) {
+  // Match endpoints by their stable (method, path) identity — NOT by
+  // `toolName`. `toolName` can carry an order-dependent "_2"/"_3" dedup
+  // suffix (see parser.js's extractEndpoints(): `usedToolNames`, assigned
+  // while iterating over the spec's `paths` object in declaration order).
+  // Two specs describing the exact same endpoints, just with their paths
+  // declared in a different key order (or a spec regenerated/reformatted
+  // by a different tool — a real, common occurrence, not contrived), could
+  // get different suffixes attached to the same physical endpoints —
+  // producing false "changed" (or even added/removed) diff entries for an
+  // API that didn't actually change at all. `method + path` is the actual
+  // thing a spec diff is supposed to be comparing.
+  const key = (e) => `${e.method} ${e.path}`;
+  const oldMap = new Map(oldEndpoints.map(e => [key(e), e]));
+  const newMap = new Map(newEndpoints.map(e => [key(e), e]));
 
   const added = [];
   const removed = [];
   const changed = [];
 
   // Find added and changed
-  for (const [name, ep] of newMap) {
-    if (!oldMap.has(name)) {
+  for (const [k, ep] of newMap) {
+    if (!oldMap.has(k)) {
       added.push(ep);
     } else {
-      const old = oldMap.get(name);
+      const old = oldMap.get(k);
       const changes = [];
 
-      // Check path change
-      if (old.path !== ep.path) changes.push(`path: ${old.path} -> ${ep.path}`);
-      if (old.method !== ep.method) changes.push(`method: ${old.method} -> ${ep.method}`);
+      // method+path is the match key now, so it can't differ here by
+      // construction — but the derived tool name still can (e.g. an
+      // operationId was added/changed), which is real, useful information
+      // that toolName-based matching used to lose (it would show as an
+      // unrelated added+removed pair instead).
+      if (old.toolName !== ep.toolName) changes.push(`tool name: ${old.toolName} -> ${ep.toolName}`);
 
       // Check params
       const oldParams = old.parameters.map(p => p.name).sort().join(",");
@@ -45,14 +60,14 @@ function diffEndpoints(oldEndpoints, newEndpoints) {
       if (old.summary !== ep.summary) changes.push(`summary changed`);
 
       if (changes.length > 0) {
-        changed.push({ tool: name, changes, oldEp: old, newEp: ep });
+        changed.push({ tool: ep.toolName, changes, oldEp: old, newEp: ep });
       }
     }
   }
 
   // Find removed
-  for (const [name, ep] of oldMap) {
-    if (!newMap.has(name)) {
+  for (const [k, ep] of oldMap) {
+    if (!newMap.has(k)) {
       removed.push(ep);
     }
   }
