@@ -645,26 +645,48 @@ async function main() {
   if (cmd === "serve") {
     const specSource = opts.positional[1];
     if (!specSource) { console.error("Usage: ay-api-gen serve <spec-url-or-file> [--transport stdio|http] [--port <n>] [--host <addr>]"); process.exit(1); }
-    // Re-exec with the runtime MCP server
-    const { execSync } = await import("node:child_process");
+    // Re-exec with the runtime MCP server. execFileSync (argv array), NOT
+    // execSync (shell string) — see the T-GEN-5 note on the `run` branch
+    // below for why: this used to build a shell command string with
+    // JSON.stringify()-"quoted" args, which does NOT stop shell metachar
+    // interpretation (a spec URL/path containing e.g. `$(...)` was real,
+    // confirmed command injection, not just a theoretical concern).
+    const { execFileSync } = await import("node:child_process");
     const runtimePath = resolve(__dirname, "../src/runtime/mcp-server.js");
     const runtimeArgs = [runtimePath, specSource];
     if (opts.transport) runtimeArgs.push("--transport", opts.transport);
     if (opts.port) runtimeArgs.push("--port", opts.port);
     if (opts.host) runtimeArgs.push("--host", opts.host);
     try {
-      execSync(`node ${runtimeArgs.map(a => JSON.stringify(a)).join(" ")}`, { stdio: "inherit" });
+      execFileSync(process.execPath, runtimeArgs, { stdio: "inherit" });
     } catch { /* server exited */ }
     return;
   }
 
   // Runtime run: call API directly from spec (no codegen)
+  //
+  // T-GEN-5: this used to build a shell command string —
+  //   execSync(`node ${JSON.stringify(runtimePath)} ${runArgs.map(a => JSON.stringify(a)).join(" ")}`, ...)
+  // — and JSON.stringify() every arg, on the theory that a JSON-quoted
+  // string is shell-safe. It isn't: POSIX shell double-quotes still allow
+  // `$(...)` command substitution and `$VAR` expansion — JSON.stringify()
+  // only escapes `"` and `\`, neither of which stops that. Confirmed with
+  // a real repro before fixing: `ay-api-gen run <spec> '$(touch /tmp/x)'`
+  // actually ran `touch /tmp/x` via the shell, before the runtime script
+  // (which would have failed on the bogus resource name) ever got a
+  // chance to reject the input. Since <resource>/<action> here are
+  // arbitrary user-typed strings by design (this is the whole point of
+  // `run`), this was directly exploitable by any caller, not just a
+  // malicious spec — and `run`'s args are 100% of everything after "run"
+  // on the command line, unfiltered. Fixed the same way as `serve` above:
+  // execFileSync with an argv array never goes through a shell at all, so
+  // there's no metacharacter-interpretation surface left to escape.
   if (cmd === "run") {
     const runArgs = process.argv.slice(3); // everything after "run"
     const runtimePath = resolve(__dirname, "../src/runtime/cli.js");
-    const { execSync } = await import("node:child_process");
+    const { execFileSync } = await import("node:child_process");
     try {
-      execSync(`node ${JSON.stringify(runtimePath)} ${runArgs.map(a => JSON.stringify(a)).join(" ")}`, { stdio: "inherit" });
+      execFileSync(process.execPath, [runtimePath, ...runArgs], { stdio: "inherit" });
     } catch { process.exit(1); }
     return;
   }
