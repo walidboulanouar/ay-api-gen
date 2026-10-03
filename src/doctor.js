@@ -11,6 +11,7 @@
 
 import { loadSpec, extractEndpoints } from "./parser.js";
 import { listAPIs } from "./registry.js";
+import { resolveBaseUrl, assertHostAllowed } from "./url-guard.js";
 
 /**
  * Find a safe GET endpoint to test (no required path params, no side effects).
@@ -119,35 +120,60 @@ async function checkAPI(api) {
   });
 
   // 4. Base URL reachable
-  const baseUrl = process.env.API_BASE_URL || parsed.baseUrl;
+  //
+  // T-RUN-1 / T-ING-2: this used to be `process.env.API_BASE_URL || parsed.baseUrl`
+  // fetched directly — neither the same-host-only override constraint
+  // (T-RUN-1) nor the private-IP/cloud-metadata deny-list (T-ING-2) that
+  // every other outbound-request path in this project enforces
+  // (runtime/mcp-server.js, runtime/cli.js, the generated CLI) was applied
+  // here. `doctor` is documented as a read-only health check, but it still
+  // dials out with real auth headers attached (buildAuthHeaders() below) —
+  // an attacker who can write settings.json's API_BASE_URL (T-SET-*) could
+  // point a "safe" health check at an internal host or the cloud-metadata
+  // endpoint and have it fetched WITH the API's real credentials attached.
+  // Resolved and host-checked the same way as everywhere else now.
+  let baseUrl;
+  let hostGuardError = null;
   try {
-    const res = await fetch(baseUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-    checks.push({ name: "base URL reachable", status: "pass", detail: `${baseUrl} -> ${res.status}` });
+    baseUrl = resolveBaseUrl(parsed.baseUrl, process.env.API_BASE_URL);
+    await assertHostAllowed(baseUrl);
   } catch (err) {
-    checks.push({ name: "base URL reachable", status: "warn", detail: `${baseUrl} -> ${err.message}` });
+    hostGuardError = err;
+    checks.push({ name: "base URL reachable", status: "fail", detail: err.message });
+    checks.push({ name: "API responds", status: "skip", detail: "skipped — base URL failed the host-safety check above" });
   }
 
-  // 5. Safe endpoint test
-  const safeEp = findSafeEndpoint(parsed.endpoints);
-  if (safeEp) {
+  if (!hostGuardError) {
     try {
-      const url = baseUrl.replace(/\/$/, "") + safeEp.path;
-      const headers = buildAuthHeaders(parsed.securitySchemes);
-      const res = await fetch(url, {
-        method: "GET",
-        headers,
-        signal: AbortSignal.timeout(10000),
-      });
-      if (res.status === 401 || res.status === 403) {
-        checks.push({ name: "API responds", status: "fail", detail: `${safeEp.path} -> ${res.status} (auth rejected)` });
-      } else {
-        checks.push({ name: "API responds", status: "pass", detail: `${safeEp.path} -> ${res.status}` });
-      }
+      const res = await fetch(baseUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+      checks.push({ name: "base URL reachable", status: "pass", detail: `${baseUrl} -> ${res.status}` });
     } catch (err) {
-      checks.push({ name: "API responds", status: "warn", detail: `${safeEp.path} -> ${err.message}` });
+      checks.push({ name: "base URL reachable", status: "warn", detail: `${baseUrl} -> ${err.message}` });
     }
-  } else {
-    checks.push({ name: "API responds", status: "skip", detail: "no safe GET endpoint to test" });
+
+    // 5. Safe endpoint test
+    const safeEp = findSafeEndpoint(parsed.endpoints);
+    if (safeEp) {
+      try {
+        const url = baseUrl.replace(/\/$/, "") + safeEp.path;
+        await assertHostAllowed(url); // re-check at request time: DNS can resolve differently between calls (rebinding)
+        const headers = buildAuthHeaders(parsed.securitySchemes);
+        const res = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: AbortSignal.timeout(10000),
+        });
+        if (res.status === 401 || res.status === 403) {
+          checks.push({ name: "API responds", status: "fail", detail: `${safeEp.path} -> ${res.status} (auth rejected)` });
+        } else {
+          checks.push({ name: "API responds", status: "pass", detail: `${safeEp.path} -> ${res.status}` });
+        }
+      } catch (err) {
+        checks.push({ name: "API responds", status: "warn", detail: `${safeEp.path} -> ${err.message}` });
+      }
+    } else {
+      checks.push({ name: "API responds", status: "skip", detail: "no safe GET endpoint to test" });
+    }
   }
 
   return { name: api.name, checks };
