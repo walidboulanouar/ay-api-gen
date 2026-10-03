@@ -4,6 +4,20 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: add root CHANGELOG.md
+
+**Status: complete.** Picked up the root `CHANGELOG.md` gap, flagged and deliberately deferred twice already (in the LICENSE and init-wizard-timing sessions below) as lower priority. Nothing higher-value was queued after clearing the LEARN-002 bug class from the test suite, so picked it up.
+
+Rather than copy `.ay/tracking/CHANGELOG.md` (an internal engineering log — per-threat-ID detail, verification commands, sprint names) wholesale, wrote a curated, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)-format summary aimed at someone deciding whether to install/upgrade the package. Made the relationship between the two files explicit in the new file's own header, so they read as intentionally different documents serving different audiences rather than two changelogs quietly drifting apart.
+
+No code touched — ran the unit suite and pin-guard anyway out of habit, both clean.
+
+### What's left
+
+Same as ever. PRs #7 through #12 are all open, unmerged, awaiting Walid's review.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
