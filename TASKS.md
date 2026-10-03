@@ -8,22 +8,27 @@ Lightweight todo/doing/done board for the current autonomous work window (starte
 
 ## Todo
 
-- Survey for a next chunk once PRs #2/#3/#4 have had a chance to be reviewed — see Notes for candidates already ruled in/out.
+- Survey for a next chunk once open PRs (#7-#16) have had a chance to be reviewed by Walid.
 
 ## Done
 
-- [x] T-ING-3 — DoS via large/deeply-nested spec: 25MB size cap added (`parser.js` + `discover.js`), statSync for local files, streaming byte-counter for fetched URLs — PR #2
-- [x] T-API-6 — spec-linter check for "no declared rate limiting" (follows T-API-4/T-API-5 pattern exactly) — PR #2
-- [x] T-GEN-3 / T-SUP-2 — verified: generated `package.json` already exact-pins its one dependency, no fix needed — PR #2
-- [x] T-ING-4 — positively audited the real `yaml` package (alias-bomb guard, merge-key non-expansion, `__proto__` non-pollution), all verified empirically with 6 new tests, no fix needed — PR #3 (stacked on #2)
-- [x] Deeper competitor research (browser-equipped subagent, chrome-devtools/claude-in-chrome) — found FastMCP Cloud/Prefect Horizon actually has a public, readable free-tier pricing page (prior research hit a gated URL and reported "not found"); corrected `GAP-ANALYSIS.md`'s one resulting overclaim — PR #4 (independent, branched off `ay-framework`)
-- [x] 166/166 unit tests, 120/120 integration tests, clean pin-guard scan (after T-ING-4)
-- [x] `.ay/tracking/*.md` + `PROGRESS-LOG.md` + `README.md` + `GAP-ANALYSIS.md` updated
-- [x] 3 branches created (never off stale `master` directly — see Notes), 3 PRs opened: #2, #3 (stacked on #2), #4 (independent)
+- [x] T-ING-3, T-API-6, T-GEN-3/T-SUP-2, T-ING-4 (spec-size cap, rate-limit lint check, dependency-pinning verification, YAML-parser positive audit) — PRs #2/#3 (or #5/#6 recreations)
+- [x] Deeper competitor research — corrected a `GAP-ANALYSIS.md` overclaim about FastMCP Cloud pricing — PR #4 (recreated as #5)
+- [x] Handbook alignment check (`ALIGNMENT.md`) — CI never ran the integration suite. Fixed `ci.yml` — PR #7
+- [x] Same gap in `release.yml` (the npm-publish gate) — PR #8
+- [x] Missing `LICENSE` file — PR #9
+- [x] LEARN-002: hardened init-wizard stdin-timing race (deterministic proof) — PR #10
+- [x] Same race class found in `testHttpTransport`'s warning wait — PR #11
+- [x] Missing root `CHANGELOG.md` — PR #12
+- [x] Missing `SECURITY.md` — PR #13
+- [x] README's command/options docs drifted badly out of sync with real `--help` — PR #14
+- [x] Real bug in `diff.js`: order-dependent `toolName` matching produced false "changed" reports on reordered-but-identical specs. Fixed to match on `(method, path)` — PR #15
+- [x] **Real bug in `reverse.js`**: `readMCPTools()`'s `server.tool()`-parsing regex only ever matched a plain quoted-string second argument. The T-RUN-3 security fix (S1, this same session's earlier work) wrapped every generated tool description in `safeDescription(<raw>, "tool") || "<fallback>"` — an expression, not a string literal — so the regex silently extracted ZERO tools from every real `generateMCPServer()` output since S1 landed. The entire reverse-generation feature (`--from-mcp <generated-server-file>`, a documented top-level feature) was broken against this project's own real output, uncaught because `readMCPTools()` had zero test coverage against actual generated code. Confirmed via a direct repro (generate a real server, extract tools, got `[]`) before touching any code. Fixed with an alternation that extracts the raw description from inside `safeDescription(...)` when present, falling back to the plain-literal form for backward compat with hand-written/third-party MCP server files. Proved with revert-confirm-restore (temporarily reverted, 3 of 5 new assertions failed exactly as predicted, restored, all pass). 5 new tests. 171/171 unit, 120/120 integration, clean pin-guard — PR #16
 
 ## Notes
 
-- Source of new work: re-read `.ay/PRODUCT.md`, `GAP-ANALYSIS.md`, `HUMAN-SETUP-NEEDED.md`, and the full `THREAT-MODEL.md` (on `security-threat-model` branch — doesn't exist on `ay-framework`/`master`, pull via `git show security-threat-model:docs/security/THREAT-MODEL.md`). Cross-checked every threat ID against current code; most were already closed in S1-S3.
-- **Branching gotcha learned the hard way this session**: `master` is stale — PR #1 (`ay-framework` → `master`) is still open, so `master` doesn't have the S1-S3 security work, `GAP-ANALYSIS.md`, or anything else this session depends on. Branching a new chunk off literal `master` loses all of that. Fix: branch off whichever ref actually has the code/docs the new chunk depends on (`ay-framework`'s tip, or an already-pushed sibling branch for a stacked PR), and target the PR's base accordingly (`master` for independent work that doesn't need unreleased code, the dependency branch for stacked work). Confirmed this the wrong way once already (accidentally edited `test/run.js` while sitting on stale `ay-framework`, silently lost the T-ING-3 test additions until caught by an unexpected test-count drop) — always `git status`/check which branch + what's actually in the file before editing when resuming after a branch switch.
-- Remaining `THREAT-MODEL.md` items (T-RUN-2, T-RUN-5, T-RUN-7) were checked against current code and confirmed already adequately mitigated (see PROGRESS-LOG.md's T-ING-3/T-API-6 session entry) — not silently skipped, just genuinely fine.
-- Ruled out as next chunks (real but not right-sized): multi-tool workflow composition and multi-spec merge (item 21) are both real design work needing UX decisions, not same-session-sized. C-01..C-07 all still genuinely blocked on human decisions or live infra — see `SHOWCASE.html`'s provisioning checklist.
+- **Standing rule, corrected by Walid this session: NEVER run `gh pr merge`, ever, on this or any repo.** Branch, commit, push, open the PR, stop. Merging to `main`/`master` is exclusively Walid's call.
+- **Branching gotcha**: `master` is stale relative to every open PR right now. Branch off whichever ref actually has what a new chunk depends on, and check `git status`/diff content after any branch switch.
+- Two consecutive rounds now (#15 diff.js, #16 reverse.js) found materially more significant bugs than the hygiene-fix rounds before them, both via the same strategy: a targeted, deep, cold read of specific under-examined source files rather than a broad shallow sweep, cross-checked against actual test coverage (both bugs lived in code paths with weak or zero real test coverage). Worth continuing this pattern for future rounds over broad hygiene sweeps, now that the obvious hygiene gaps (LICENSE, CHANGELOG, SECURITY.md, README drift) are closed.
+- Remaining `THREAT-MODEL.md` items (T-RUN-2, T-RUN-5, T-RUN-7) checked against current code, confirmed already adequately mitigated.
+- Ruled out as next chunks (real but not right-sized): multi-tool workflow composition and multi-spec merge (item 21) — real design work needing UX decisions. C-01..C-07 all still genuinely blocked on human decisions or live infra — see `SHOWCASE.html`'s provisioning checklist.

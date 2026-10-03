@@ -149,19 +149,30 @@ export function readMCPTools(source) {
     // Not JSON — try extracting from source code
   }
 
-  // Parse server.tool() calls from JS source
+  // Parse server.tool() calls from JS source. The second argument can be
+  // EITHER a plain quoted string literal (a hand-written or third-party MCP
+  // server) OR `safeDescription(<raw>, "tool") || "<fallback>"` — the shape
+  // this project's OWN generator has emitted since the T-RUN-3 security fix
+  // wrapped every tool description for prompt-injection sanitization. The
+  // old plain-string-only pattern silently matched ZERO tools against any
+  // file this tool itself generated (confirmed: readMCPTools() on a real
+  // generateMCPServer() output returned an empty tools array) — the second
+  // argument no longer starts with a quote character at all. The
+  // alternation below extracts the original raw description from inside
+  // safeDescription(...) when present, falling back to the plain-literal
+  // form for non-generated input.
   const tools = [];
-  const toolRegex = /server\.tool\(\s*["'`]([^"'`]+)["'`]\s*,\s*["'`]([^"'`]+)["'`]\s*,\s*(\{[\s\S]*?\})\s*,/g;
+  const toolRegex = /server\.tool\(\s*["'`]([^"'`]+)["'`]\s*,\s*(?:safeDescription\(\s*["'`]([^"'`]*)["'`][\s\S]*?\)\s*\|\|\s*["'`][^"'`]*["'`]|["'`]([^"'`]+)["'`])\s*,\s*(\{[\s\S]*?\})\s*,/g;
   let match;
 
   while ((match = toolRegex.exec(content)) !== null) {
     const name = match[1];
-    const description = match[2];
+    const description = match[2] ?? match[3];
     // Try to parse the schema object (best effort)
     let inputSchema = { type: "object", properties: {} };
     try {
       // Clean up the schema string for JSON parsing
-      const schemaStr = match[3]
+      const schemaStr = match[4]
         .replace(/(\w+):/g, '"$1":')  // quote keys
         .replace(/'/g, '"')           // single to double quotes
         .replace(/,\s*}/g, "}")       // trailing commas

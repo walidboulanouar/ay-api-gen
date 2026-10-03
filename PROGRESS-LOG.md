@@ -4,6 +4,40 @@ Handoff-style log for whoever picks this project up next. Newest session at the 
 
 ---
 
+## 2026-07-25 — Session: fix a real bug in reverse.js (safeDescription regex mismatch)
+
+**Status: complete.** Follow-up to the `diff.js` fix (PR #15): a targeted survey directive to deep-read `src/reverse.js`, `src/registry.js`, `src/doctor.js`, `src/env-generator.js` cold — files with less deep-audit history than the heavily-scrutinized security-critical ones. `reverse.js` had a real, significant bug; the other three came back clean on a genuine cold read.
+
+### The bug
+
+`readMCPTools()`'s `server.tool()`-parsing regex only ever matched a plain quoted-string second argument (the tool description). But the T-RUN-3 security fix (S1, earlier this same session's work) wrapped every generated tool description in `safeDescription(<raw>, "tool") || "<fallback>"` for prompt-injection sanitization — an expression, not a string literal. Since S1 landed, the second argument in every `server.tool()` call this project's OWN generator emits no longer starts with a quote character at all.
+
+Confirmed concretely before touching any code: generated a real MCP server via `generateMCPServer()`, ran `readMCPTools()` against the actual output file, got back an empty tools array. The entire reverse-generation feature (`--from-mcp <generated-server-file>`, a documented top-level feature — "Also supports the reverse: read MCP tool definitions and generate an OpenAPI spec from them") has been silently broken against this project's own real output since S1, and nothing caught it because `readMCPTools()` had zero test coverage against actual generated code — the existing `testReverse()` only exercises `generateOpenAPIFromTools()` with hand-built tool objects, never the source-parsing path at all.
+
+### The fix
+
+Extended the regex with an alternation: extract the raw (pre-sanitization) description from inside `safeDescription(...)` when present, falling back to the old plain-quoted-string form for backward compatibility with hand-written or third-party MCP server files (`readMCPTools()` is documented as reading from "settings.json or server file," not only files this tool generated).
+
+### Proof
+
+Same revert-confirm-restore discipline as the rest of this project's history: temporarily reverted just the regex, confirmed 3 of the 5 new assertions fail exactly as predicted (0 tools extracted instead of 2; the backward-compat plain-string case correctly kept passing, confirming the old code wasn't universally broken, just broken against this project's own output), restored the fix, confirmed all 5 pass again.
+
+### Verification
+
+```bash
+node test/run.js              # 171/171 (166 + 5 new)
+node test/integration-cli.js  # 120/120 (unaffected)
+python3 ~/.claude/skills/pin-guard/scripts/scan.py .   # clean, same 2 pre-existing findings
+```
+
+No leaked processes.
+
+### What's left
+
+Same as ever. PRs #7 through #16 are all open, unmerged, awaiting Walid's review. The same deep-read pass also found a second, more significant bug in `doctor.js` (a real SSRF gap) — logged and fixed as its own separate PR (#17) rather than bundled here, since it's an unrelated bug in a different file. `registry.js` and `env-generator.js` did come back clean on a genuine cold read. Two consecutive rounds finding real bugs via targeted deep-reads of under-examined files (vs. broad hygiene sweeps) — worth continuing that pattern.
+
+---
+
 ## 2026-07-25 — Session: T-ING-4 positive audit (YAML parser) + deeper competitor research
 
 **Status: complete.** Ran two things in parallel: closed the last realistic gap left in `THREAT-MODEL.md` myself, while a browser-equipped research subagent did a deeper competitor pricing/security-marketing pass (this session's other new authorization: WebSearch/WebFetch plus chrome-devtools/claude-in-chrome browser tools, used liberally).
