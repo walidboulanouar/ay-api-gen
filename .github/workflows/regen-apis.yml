@@ -17,7 +17,7 @@ jobs:
       - run: npm ci
 
       - name: Regenerate all APIs from saved configs
-        run: npx ay-api-gen regen --all --no-settings || echo "No APIs to regenerate"
+        run: node bin/ay-api-gen.js regen --all --no-settings || echo "No APIs to regenerate"
 
       - name: Commit if changed
         run: |

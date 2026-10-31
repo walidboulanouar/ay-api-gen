@@ -12,3 +12,13 @@ node_modules/
 .ay/locks/
 .ay/retros/
 .ay/plans/
+
+# Internal docs (kept locally, not published)
+.ay/
+.claude/
+CLAUDE.md
+PROGRESS-LOG.md
+GAP-ANALYSIS.md
+HUMAN-SETUP-NEEDED.md
+STANDING.html
+SETUP-REQUIREMENTS.html
