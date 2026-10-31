@@ -1,12 +1,67 @@
+<div align="center">
+
 # ay-api-gen
 
-Turn any OpenAPI spec into MCP tools for Claude Code — instantly.
+**Turn any OpenAPI spec into MCP tools and a CLI for Claude Code.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/walidboulanouar/ay-api-gen?style=flat)](https://github.com/walidboulanouar/ay-api-gen/stargazers)
+[![Node >=20](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](package.json)
+[![MCP](https://img.shields.io/badge/Model%20Context%20Protocol-server-blue)](https://modelcontextprotocol.io)
+
+</div>
+
+## Quickstart
 
 ```bash
-npx ay-api-gen https://petstore.swagger.io/v2/swagger.json
+# 1. Install
+git clone https://github.com/walidboulanouar/ay-api-gen.git && cd ay-api-gen && npm install
+
+# 2. Point it at any OpenAPI/Swagger spec (URL or local file) and generate an MCP server + CLI
+node bin/ay-api-gen.js https://petstore.swagger.io/v2/swagger.json
+
+# 3. Or skip codegen and serve the spec as an MCP server straight away (add this command to Claude Code's settings.json)
+node bin/ay-api-gen.js serve https://petstore.swagger.io/v2/swagger.json
 ```
 
-That's it. Your API is now available as MCP tools in Claude Code. Restart Claude Code and start using them.
+Generated files land in `.ay/apis/<name>/` and the server is registered in Claude Code's `settings.json` as `ay-api-gen:<name>` (skip with `--no-settings`). Restart Claude Code to see the tools. Requires Node 20 or newer.
+
+## Features
+
+- **OpenAPI to MCP server.** One tool per endpoint, generated as a standalone `mcp-server.js` (`src/mcp-generator.js`).
+- **Matching CLI.** One command per endpoint, for example `users get --id 123` (`src/cli-generator.js`).
+- **Runtime mode.** `serve` runs an MCP server from a spec with no generated files, over stdio or `--transport http` (`src/runtime/`).
+- **Auth detection.** Reads Bearer, Basic, API key (header or query) and OAuth2 schemes from the spec and writes a matching `.env.example` (`src/auth-codegen.js`, `src/env-generator.js`).
+- **Spec formats.** Swagger 2.0, OpenAPI 3.0 and 3.1, in JSON or YAML (`src/parser.js`, `src/yaml-parser.js`).
+- **Reverse generation.** `--from-mcp` reads MCP tool definitions and writes an OpenAPI spec (`src/reverse.js`).
+- **Tool pruning.** `--slim`, `--token-budget` and `--max-tools` trim large specs to fit a context budget (`src/slim.js`).
+- **Spec discovery.** `discover <domain>` probes common paths for an OpenAPI spec (`src/discover.js`).
+- **Spec diff.** `diff <old> <new>` shows which tools changed, were added or were removed (`src/diff.js`).
+- **Free security lint.** `audit --baseline <spec>` flags unauthenticated mutating endpoints, sensitive params and weak auth (`src/spec-linter.js`).
+- **Safety defaults.** Same-host base URL guard, private-IP deny-list, truncated and boundary-marked responses, capped tool descriptions, 25MB spec limit (`src/url-guard.js`, `src/truncate.js`, `src/desc-sanitize.js`).
+- **Registry.** `list`, `doctor`, `remove` and `regen --all` manage generated APIs (`src/registry.js`, `src/doctor.js`).
+- **Optional runtime tuning.** `AY_CACHE_TTL_MS` response cache and `AY_RATE_LIMIT_RPS` throttle (`src/response-cache.js`, `src/rate-limiter.js`).
+
+The test suite (`npm test`) runs 166 checks with no network or API keys.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[OpenAPI / Swagger spec<br/>URL or file] --> B[parser + validator<br/>resolve refs, extract endpoints]
+    B --> C{mode}
+    C -->|generate| D[mcp-server.js + cli.js<br/>+ .env.example]
+    C -->|serve / run| E[runtime MCP server<br/>no files written]
+    D --> F[Claude Code settings.json]
+    E --> F
+    F --> G[Claude calls API tools]
+    G -->|url-guard, truncate, sanitize| H[Your API]
+    I[MCP tool definitions] -->|--from-mcp| J[OpenAPI spec]
+```
+
+Built by [AY Automate](https://ayautomate.com), an AI-native engineering company.
+
+---
 
 ## What it does
 
@@ -26,11 +81,11 @@ Start an MCP server directly from any spec — no code generation:
 
 ```bash
 # Start MCP server (add to Claude Code settings.json)
-ay-api-gen serve https://petstore.swagger.io/v2/swagger.json
+node bin/ay-api-gen.js serve https://petstore.swagger.io/v2/swagger.json
 
 # Call an API endpoint directly
-ay-api-gen run https://petstore.swagger.io/v2/swagger.json inventory list
-ay-api-gen run https://petstore.swagger.io/v2/swagger.json pet get --petId 1
+node bin/ay-api-gen.js run https://petstore.swagger.io/v2/swagger.json inventory list
+node bin/ay-api-gen.js run https://petstore.swagger.io/v2/swagger.json pet get --petId 1
 ```
 
 Add to `.claude/settings.json` for persistent use:
@@ -39,8 +94,8 @@ Add to `.claude/settings.json` for persistent use:
 {
   "mcpServers": {
     "petstore": {
-      "command": "npx",
-      "args": ["ay-api-gen", "serve", "https://petstore.swagger.io/v2/swagger.json"],
+      "command": "node",
+      "args": ["/path/to/ay-api-gen/bin/ay-api-gen.js", "serve", "https://petstore.swagger.io/v2/swagger.json"],
       "env": { "API_KEY": "your-key" }
     }
   }
@@ -51,10 +106,10 @@ Add to `.claude/settings.json` for persistent use:
 
 ```bash
 # Generate MCP server + CLI + .env.example
-ay-api-gen https://api.example.com/openapi.json
+node bin/ay-api-gen.js https://api.example.com/openapi.json
 
 # Generate with custom name and output dir
-ay-api-gen ./my-api.json --name my-api --output ./generated
+node bin/ay-api-gen.js ./my-api.json --name my-api --output ./generated
 ```
 
 Output:
@@ -92,7 +147,7 @@ GET /users/{id}/posts/{id}/comments → list_user_post_comments
 
 ## Auth detection
 
-ay-api-gen reads security schemes from the spec and generates the right auth code:
+node bin/ay-api-gen.js reads security schemes from the spec and generates the right auth code:
 
 | Auth Type | Detected From | Env Var |
 |-----------|--------------|---------|
@@ -120,17 +175,17 @@ OAUTH_ACCESS_TOKEN=your-access-token-here
 
 ```bash
 # Generate
-ay-api-gen <spec-url-or-file> [options]     # OpenAPI → MCP + CLI
-ay-api-gen --from-mcp <file> [options]      # Reverse: MCP → OpenAPI
+node bin/ay-api-gen.js <spec-url-or-file> [options]     # OpenAPI → MCP + CLI
+node bin/ay-api-gen.js --from-mcp <file> [options]      # Reverse: MCP → OpenAPI
 
 # Runtime (no codegen)
-ay-api-gen serve <spec>                     # Start MCP server directly
-ay-api-gen run <spec> <resource> <action>   # Call API directly
+node bin/ay-api-gen.js serve <spec>                     # Start MCP server directly
+node bin/ay-api-gen.js run <spec> <resource> <action>   # Call API directly
 
 # Manage
-ay-api-gen list                             # List all generated APIs
-ay-api-gen remove <name>                    # Remove from registry
-ay-api-gen regen [name|--all]               # Regenerate from saved config
+node bin/ay-api-gen.js list                             # List all generated APIs
+node bin/ay-api-gen.js remove <name>                    # Remove from registry
+node bin/ay-api-gen.js regen [name|--all]               # Regenerate from saved config
 ```
 
 ### Options
@@ -148,8 +203,7 @@ ay-api-gen regen [name|--all]               # Regenerate from saved config
 
 A spec you didn't write is untrusted input — its title, descriptions, and declared
 base URL all end up in generated code or in Claude's context. `ay-api-gen` ships
-several default-on mitigations (see `docs/security/THREAT-MODEL.md` for the full
-picture):
+several default-on mitigations :
 
 - **Same-host base URL guard.** `API_BASE_URL` may only change the path of the
   spec's declared base URL, not the host/scheme — this stops a `settings.json`
@@ -192,7 +246,7 @@ picture):
   counter that can't be bypassed by a missing or lying `Content-Length`.
 
 None of this defends against a fully malicious, deliberately-targeted spec with
-unlimited creativity — see the threat model for what's still open.
+unlimited creativity.
 
 ## Runtime tuning (`serve` / generated servers)
 
@@ -240,13 +294,13 @@ Register multiple APIs — each gets its own MCP server:
 {
   "mcpServers": {
     "stripe": {
-      "command": "npx",
-      "args": ["ay-api-gen", "serve", "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"],
+      "command": "node",
+      "args": ["/path/to/ay-api-gen/bin/ay-api-gen.js", "serve", "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"],
       "env": { "API_KEY": "sk_test_..." }
     },
     "github": {
-      "command": "npx",
-      "args": ["ay-api-gen", "serve", "./specs/github.json"],
+      "command": "node",
+      "args": ["/path/to/ay-api-gen/bin/ay-api-gen.js", "serve", "./specs/github.json"],
       "env": { "API_KEY": "ghp_..." }
     }
   }
