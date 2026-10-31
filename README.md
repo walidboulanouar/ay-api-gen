@@ -2,6 +2,8 @@
 
 # ay-api-gen
 
+<p align="center"><img src="docs/assets/hero.png" alt="Oh, you don't have an MCP for that API? Get one." width="800"></p>
+
 **Turn any OpenAPI spec into MCP tools and a CLI for Claude Code.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
